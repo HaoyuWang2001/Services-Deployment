@@ -13,7 +13,7 @@
         </div>
       </template>
 
-      <el-table :data="nodes" v-loading="loading" empty-text="暂无节点，请编辑 cluster.json 后点击「重新加载配置」">
+      <el-table :data="nodes" v-loading="loading" empty-text="暂无节点：请复制 cluster.example.json 为 cluster.json 并修改，然后点击「重新加载配置」">
         <el-table-column prop="name" label="名称" width="140" />
         <el-table-column prop="ip" label="IP" width="160" />
         <el-table-column prop="username" label="用户名" width="100" />

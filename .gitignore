@@ -7,6 +7,9 @@ __pycache__/
 # 运行时状态（任务/实例记录）
 data/
 
+# 真实集群配置（从 cluster.example.json 复制，不入库）
+cluster.json
+
 # 前端
 web/node_modules/
 web/dist/

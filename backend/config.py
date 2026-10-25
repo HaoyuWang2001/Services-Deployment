@@ -92,7 +92,11 @@ class ClusterConfig(BaseModel):
 
 def load_cluster(path: Path) -> ClusterConfig:
     if not path.is_file():
-        raise FileNotFoundError(f"cluster.json 不存在: {path}")
+        if path.parent != path and (path.parent / "cluster.example.json").is_file():
+            hint = "（请先复制 cluster.example.json 为 cluster.json 并按实际环境修改）"
+        else:
+            hint = ""
+        raise FileNotFoundError(f"cluster.json 不存在: {path}{hint}")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:

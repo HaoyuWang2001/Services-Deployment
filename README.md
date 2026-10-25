@@ -23,7 +23,15 @@
 pip install -r requirements.txt
 ```
 
-### 2. 配置集群 `cluster.json`
+### 2. 配置集群
+
+复制样例并按实际环境修改：
+
+```bash
+cp cluster.example.json cluster.json   # Windows: copy cluster.example.json cluster.json
+```
+
+`cluster.json` 内容：
 
 ```json
 {
