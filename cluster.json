@@ -1,0 +1,13 @@
+{
+  "defaults": {
+    "username": "root",
+    "port": 22,
+    "private_key": "~/.ssh/id_rsa",
+    "connect_timeout": 10
+  },
+  "nodes": [
+    { "name": "node1", "ip": "192.168.1.11" },
+    { "name": "node2", "ip": "192.168.1.12" },
+    { "name": "node3", "ip": "192.168.1.13" }
+  ]
+}

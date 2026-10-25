@@ -1,0 +1,5 @@
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}

@@ -1,0 +1,17 @@
+{
+  "name": "mooncake-store",
+  "description": "Mooncake Store（示例模板，依赖 Master 地址，请替换为真实启动命令）",
+  "workspace": "/data/services/mooncake-store",
+  "start": {
+    "script": "start.sh",
+    "args": [],
+    "log": "store.log"
+  },
+  "stop": {
+    "script": "stop.sh",
+    "timeout": 10
+  },
+  "variables": {
+    "MASTER_ADDR": "192.168.1.11:2379"
+  }
+}
