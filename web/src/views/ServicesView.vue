@@ -4,9 +4,24 @@
               type="warning" show-icon :closable="false" style="margin-bottom: 12px" />
 
     <div class="header-row">
-      <span class="hint">点击服务进入子页面：配置编辑 / 启停操作 / 运行实例 / 日志</span>
+      <span class="hint">服务是模板，启动后按 (服务, 节点) 生成实例；实例是重启/停止的操作单位</span>
       <el-button size="small" @click="load" :loading="loading">刷新</el-button>
+      <el-button size="small" type="primary" @click="createDialog = true">新建服务</el-button>
     </div>
+
+    <el-dialog v-model="createDialog" title="新建服务" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="服务名称">
+          <el-input v-model="newName" placeholder="仅字母数字._- ，如 etcd" maxlength="64" />
+        </el-form-item>
+      </el-form>
+      <el-alert type="info" :closable="false" show-icon
+                title="将从 services/example 模板克隆（含示例脚本），创建后请在子页面修改 workspace 等配置并替换真实启动脚本" />
+      <template #footer>
+        <el-button @click="createDialog = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="create">创建并编辑</el-button>
+      </template>
+    </el-dialog>
 
     <el-row :gutter="16">
       <el-col v-for="svc in services" :key="svc.name" :xs="24" :sm="12" :lg="8" style="margin-bottom: 16px">
@@ -41,15 +56,40 @@
 <script setup>
 import { onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 
+const router = useRouter()
 const services = ref([])
 const serviceErrors = ref([])
 const loading = ref(false)
 const instanceSummary = reactive({}) // service -> {running, total}
+const createDialog = ref(false)
+const newName = ref('')
+const creating = ref(false)
 
 function runningCount(name) { return instanceSummary[name]?.running || 0 }
 function instanceCount(name) { return instanceSummary[name]?.total || 0 }
+
+async function create() {
+  const name = newName.value.trim()
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    ElMessage.warning('服务名仅允许字母数字._-，且以字母数字开头')
+    return
+  }
+  creating.value = true
+  try {
+    await api.createService(name)
+    ElMessage.success(`服务 ${name} 已创建（克隆自 example 模板）`)
+    createDialog.value = false
+    newName.value = ''
+    router.push(`/services/${name}`)
+  } catch (e) {
+    ElMessage.error(`创建失败: ${e.message}`)
+  } finally {
+    creating.value = false
+  }
+}
 
 async function load() {
   loading.value = true

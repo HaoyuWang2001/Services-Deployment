@@ -41,6 +41,12 @@
             <el-input-number v-model="form.stopTimeout" :min="1" :max="300" style="width: 110px" />
           </div>
         </el-form-item>
+        <el-form-item label="目标节点">
+          <el-select v-model="form.nodes" multiple filterable placeholder="留空 = 允许集群全部节点" style="width: 420px">
+            <el-option v-for="n in nodes" :key="n" :label="n" :value="n" />
+          </el-select>
+          <div class="field-hint">配置后仅允许在这些节点上启动该服务（如 etcd 仅 node4）</div>
+        </el-form-item>
         <el-form-item label="默认变量">
           <div class="vars-editor">
             <div v-for="(row, i) in form.variables" :key="i" class="var-row">
@@ -59,15 +65,17 @@
       </el-form>
     </el-card>
 
-    <!-- 启停操作 -->
+    <!-- 启动实例 -->
     <el-card shadow="never" class="block">
-      <template #header><span>启停操作</span></template>
+      <template #header><span>启动实例</span></template>
+      <el-alert v-if="cfg?.nodes?.length" type="info" :closable="false" show-icon
+                :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" style="margin-bottom: 10px" />
       <div class="node-select">
         <span class="label">目标节点：</span>
         <el-checkbox-group v-model="selectedNodes">
-          <el-checkbox v-for="n in nodes" :key="n" :value="n">{{ n }}</el-checkbox>
+          <el-checkbox v-for="n in selectableNodes" :key="n" :value="n">{{ n }}</el-checkbox>
         </el-checkbox-group>
-        <el-button link size="small" @click="selectedNodes = [...nodes]">全选</el-button>
+        <el-button link size="small" @click="selectedNodes = [...selectableNodes]">全选</el-button>
         <el-button link size="small" @click="selectedNodes = []">清空</el-button>
       </div>
       <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
@@ -81,9 +89,8 @@
       </div>
       <div class="actions">
         <el-button size="small" :disabled="dirty" @click="submit('deploy')">仅部署文件</el-button>
-        <el-button size="small" type="primary" :disabled="dirty" @click="submit('start')">启动</el-button>
-        <el-button size="small" type="warning" :disabled="dirty" @click="submit('restart')">重启</el-button>
-        <el-button size="small" type="danger" :disabled="dirty" @click="submit('stop')">停止</el-button>
+        <el-button size="small" type="primary" :disabled="dirty" @click="submit('start')">启动实例</el-button>
+        <span class="dirty-hint">重启 / 停止请在下方实例列表中按实例操作</span>
       </div>
     </el-card>
 
@@ -109,9 +116,10 @@
         </el-table-column>
         <el-table-column prop="started_at" label="启动时间" width="180" />
         <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="210">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">查看日志</el-button>
+            <el-button size="small" link type="warning" :disabled="dirty" @click="restartInstance(row)">重启</el-button>
             <el-button size="small" link type="danger" :disabled="dirty" @click="stopInstance(row)">停止</el-button>
           </template>
         </el-table-column>
@@ -124,8 +132,7 @@
 import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { ACTION_TEXT, api } from '../api'
-
+import { api } from '../api'
 const route = useRoute()
 const useRouterPush = useRouter().push
 
@@ -137,7 +144,7 @@ const selectedNodes = ref([])
 const varsOverride = reactive({})
 
 const form = reactive({
-  description: '', workspace: '', script: '', argsText: '', log: '',
+  description: '', workspace: '', nodes: [], script: '', argsText: '', log: '',
   stopScript: '', stopTimeout: 10, variables: [],
 })
 
@@ -149,6 +156,7 @@ function payloadFromCfg(c) {
   return {
     description: c.description || '',
     workspace: c.workspace,
+    nodes: c.nodes || [],
     start: { script: c.start.script, args: c.start.args || [], log: c.start.log },
     stop: { script: c.stop.script || null, timeout: c.stop.timeout },
     variables: c.variables || {},
@@ -164,6 +172,7 @@ function formPayload() {
   return {
     description: form.description,
     workspace: form.workspace.trim(),
+    nodes: form.nodes,
     start: { script: form.script.trim(), args, log: form.log.trim() },
     stop: { script: form.stopScript.trim() || null, timeout: form.stopTimeout },
     variables,
@@ -176,6 +185,7 @@ const dirty = computed(() =>
 function fillFromCfg(c) {
   form.description = c.description || ''
   form.workspace = c.workspace
+  form.nodes = [...(c.nodes || [])]
   form.script = c.start.script
   form.argsText = (c.start.args || []).join(' ')
   form.log = c.start.log
@@ -228,17 +238,22 @@ function rebuildOverride() {
   for (const k of Object.keys(cfg.value?.variables || {})) varsOverride[k] = ''
 }
 
-// ---------------------------------------------------------------- 启停操作
+// ---------------------------------------------------------------- 启动实例
+const selectableNodes = computed(() => {
+  if (cfg.value?.nodes?.length) return cfg.value.nodes
+  return nodes.value
+})
+
 async function submit(action) {
   if (!selectedNodes.value.length) {
     ElMessage.warning('请先勾选目标节点')
     return
   }
-  if (action === 'stop' || action === 'restart') {
+  if (action === 'start') {
     try {
       await ElMessageBox.confirm(
-        `确定在 ${selectedNodes.value.join('、')} 上${ACTION_TEXT[action]}服务 ${name.value}？`,
-        `${ACTION_TEXT[action]}确认`, { type: 'warning' })
+        `确定在 ${selectedNodes.value.join('、')} 上启动服务 ${name.value}？`,
+        '启动实例确认', { type: 'info' })
     } catch { return }
   }
   const variables = {}
@@ -282,6 +297,20 @@ async function stopInstance(row) {
   try {
     await api.createTask({ service: name.value, action: 'stop', nodes: [row.node] })
     ElMessage.success('停止任务已提交')
+    setTimeout(loadInstances, 800)
+  } catch (e) {
+    ElMessage.error(`创建任务失败: ${e.message}`)
+  }
+}
+
+async function restartInstance(row) {
+  try {
+    await ElMessageBox.confirm(
+      `确定重启 ${row.node} 上的实例（PID ${row.pid ?? '?'}）？将生成新的日志批次`, '重启确认', { type: 'warning' })
+  } catch { return }
+  try {
+    const task = await api.createTask({ service: name.value, action: 'restart', nodes: [row.node] })
+    ElMessage.success(`重启任务已提交（run_id ${task.run_id}）`)
     setTimeout(loadInstances, 800)
   } catch (e) {
     ElMessage.error(`创建任务失败: ${e.message}`)
@@ -333,6 +362,7 @@ onDeactivated(() => clearInterval(timer))
 .head-actions { margin-left: auto; }
 .block { margin-bottom: 16px; }
 .cfg-form { max-width: 760px; }
+.field-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .stop-row { display: flex; align-items: center; gap: 10px; }
 .stop-timeout-label { color: var(--el-text-color-secondary); font-size: 13px; }
 .vars-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }

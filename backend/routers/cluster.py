@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import executor
 from ..config import ConfigStore
 from ..deps import get_pool, get_store
 from ..ssh import SSHPool, SSHError
@@ -40,6 +41,24 @@ async def test_node(name: str, store: ConfigStore = Depends(get_store),
         "arch": info[0].split()[-1] if len(info) > 0 else "",
         "home": info[1] if len(info) > 1 else "",
     }
+
+
+@router.get("/nodes/{name}/ports")
+async def node_ports(name: str, store: ConfigStore = Depends(get_store),
+                     pool: SSHPool = Depends(get_pool)):
+    """查询节点监听端口及占用进程（ss -tulnpH）。"""
+    try:
+        node = store.node(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    try:
+        ports = await executor.list_ports(pool, node)
+    except (SSHError, executor.ExecError) as e:
+        return {"ok": False, "detail": str(e), "ports": [], "warning": None}
+    warning = None
+    if ports and not any(p["processes"] for p in ports):
+        warning = "未获取到进程信息：SSH 用户可能非 root"
+    return {"ok": True, "ports": ports, "warning": warning, "detail": None}
 
 
 @router.post("/reload")

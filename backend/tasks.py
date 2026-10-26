@@ -116,11 +116,18 @@ class TaskManager:
             service = self.store.service(service_name)
         except KeyError as e:
             raise TaskError(str(e)) from e
+        if service.hidden:
+            raise TaskError(f"{service_name} 是模板服务（hidden），不可直接操作；请先克隆为新服务")
         if not nodes:
             raise TaskError("nodes 不能为空")
         unknown = [n for n in nodes if self.store.cluster.node(n) is None]
         if unknown:
             raise TaskError(f"未知节点: {unknown}")
+        if service.nodes:
+            not_allowed = [n for n in nodes if n not in service.nodes]
+            if not_allowed:
+                raise TaskError(
+                    f"节点不在服务 {service_name} 的目标节点列表 {service.nodes} 中: {not_allowed}")
         if len(set(nodes)) != len(nodes):
             raise TaskError("nodes 存在重复")
         merged = dict(service.variables)

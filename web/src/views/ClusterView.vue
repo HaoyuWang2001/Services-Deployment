@@ -7,6 +7,7 @@
         <div class="card-header">
           <span>集群节点（cluster.json）</span>
           <div>
+            <el-button size="small" @click="openPortQuery">端口查询</el-button>
             <el-button size="small" @click="reloadConfig">重新加载配置</el-button>
             <el-button size="small" type="primary" @click="testAll" :loading="testing">全部测试连接</el-button>
           </div>
@@ -34,18 +35,81 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="140">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="testOne(row.name)">测试</el-button>
+            <el-button size="small" link type="primary" @click="openPorts(row.name)">端口</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 节点端口抽屉 -->
+    <el-drawer v-model="portsVisible" :title="`节点 ${portsNode} 监听端口`" size="62%">
+      <div class="drawer-toolbar">
+        <el-input v-model="portsFilter" placeholder="按端口或进程名过滤" size="small" clearable style="width: 260px" />
+        <el-button size="small" @click="loadPorts(portsNode)" :loading="portsLoading">刷新</el-button>
+        <el-alert v-if="portsWarning" :title="portsWarning" type="warning" show-icon :closable="false" style="flex: 1" />
+      </div>
+      <el-alert v-if="portsError" :title="portsError" type="error" show-icon :closable="false" style="margin-bottom: 10px" />
+      <el-table :data="filteredPorts" v-loading="portsLoading" size="small"
+                empty-text="暂无监听端口（或节点不可达）">
+        <el-table-column prop="proto" label="协议" width="70" />
+        <el-table-column prop="state" label="状态" width="90" />
+        <el-table-column prop="local_addr" label="监听地址" min-width="140" />
+        <el-table-column prop="port" label="端口" width="90" sortable />
+        <el-table-column label="进程" min-width="200">
+          <template #default="{ row }">
+            <span v-if="row.processes.length">
+              <span v-for="(p, i) in row.processes" :key="i" class="proc">
+                {{ p.process }}<span class="pid">(#{{ p.pid }})</span>{{ i < row.processes.length - 1 ? '、' : '' }}
+              </span>
+            </span>
+            <span v-else class="no-proc">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-drawer>
+
+    <!-- 端口对照查询 -->
+    <el-dialog v-model="portQueryVisible" title="端口查询：多节点占用对照" width="760px">
+      <div class="pq-form">
+        <span class="label">端口号</span>
+        <el-input-number v-model="pqPort" :min="1" :max="65535" controls-position="right" style="width: 140px" />
+        <span class="label" style="margin-left: 16px">节点</span>
+        <el-select v-model="pqNodes" multiple placeholder="选择节点" style="width: 360px">
+          <el-option v-for="n in nodes" :key="n.name" :label="n.name" :value="n.name" />
+        </el-select>
+        <el-button type="primary" size="small" :loading="pqLoading" @click="runPortQuery">查询</el-button>
+      </div>
+      <el-table :data="pqResults" v-loading="pqLoading" size="small" style="margin-top: 12px"
+                empty-text="输入端口号并选择节点后查询">
+        <el-table-column prop="node" label="节点" width="110" />
+        <el-table-column label="结果" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.ok === null" type="info" size="small">未查询</el-tag>
+            <el-tag v-else-if="row.ok && row.matches.length" type="danger" size="small">占用</el-tag>
+            <el-tag v-else-if="row.ok" type="success" size="small">空闲</el-tag>
+            <el-tag v-else type="warning" size="small">失败</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="占用进程 / 说明" min-width="320">
+          <template #default="{ row }">
+            <span v-if="row.ok && row.matches.length">
+              <span v-for="(m, i) in row.matches" :key="i" class="proc">
+                {{ m.proto }} {{ m.local_addr }}:{{ m.port }} → {{ m.processes.map(p => `${p.process}(#${p.pid})`).join('、') || '未知进程' }}{{ i < row.matches.length - 1 ? '；' : '' }}
+              </span>
+            </span>
+            <span v-else>{{ row.detail || '-' }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 
@@ -102,9 +166,99 @@ async function reloadConfig() {
   }
 }
 
+// ---------------------------------------------------------------- 端口抽屉
+const portsVisible = ref(false)
+const portsNode = ref('')
+const portsData = ref([])
+const portsLoading = ref(false)
+const portsError = ref(null)
+const portsWarning = ref(null)
+const portsFilter = ref('')
+
+const filteredPorts = computed(() => {
+  const kw = portsFilter.value.trim().toLowerCase()
+  if (!kw) return portsData.value
+  return portsData.value.filter((p) =>
+    String(p.port).includes(kw) ||
+    p.processes.some((x) => x.process.toLowerCase().includes(kw)))
+})
+
+async function loadPorts(name) {
+  portsLoading.value = true
+  portsError.value = null
+  try {
+    const r = await api.nodePorts(name)
+    if (r.ok) {
+      portsData.value = r.ports
+      portsWarning.value = r.warning
+    } else {
+      portsData.value = []
+      portsWarning.value = null
+      portsError.value = r.detail
+    }
+  } catch (e) {
+    portsData.value = []
+    portsError.value = e.message
+  } finally {
+    portsLoading.value = false
+  }
+}
+
+async function openPorts(name) {
+  portsNode.value = name
+  portsFilter.value = ''
+  portsVisible.value = true
+  await loadPorts(name)
+}
+
+// ---------------------------------------------------------------- 端口查询
+const portQueryVisible = ref(false)
+const pqPort = ref(22)
+const pqNodes = ref([])
+const pqLoading = ref(false)
+const pqResults = ref([])
+
+async function runPortQuery() {
+  if (!pqPort.value || !pqNodes.value.length) {
+    ElMessage.warning('请输入端口号并选择节点')
+    return
+  }
+  pqLoading.value = true
+  pqResults.value = pqNodes.value.map((n) => ({ node: n, ok: null, matches: [], detail: '' }))
+  await Promise.all(pqNodes.value.map(async (n) => {
+    const row = pqResults.value.find((r) => r.node === n)
+    try {
+      const r = await api.nodePorts(n)
+      if (r.ok) {
+        row.ok = true
+        row.matches = r.ports.filter((p) => p.port === pqPort.value)
+        row.detail = ''
+      } else {
+        row.ok = false
+        row.detail = r.detail
+      }
+    } catch (e) {
+      row.ok = false
+      row.detail = e.message
+    }
+  }))
+  pqLoading.value = false
+}
+
+function openPortQuery() {
+  if (!pqNodes.value.length) pqNodes.value = nodes.value.map((n) => n.name)
+  portQueryVisible.value = true
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.drawer-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.proc { font-family: Consolas, monospace; }
+.pid { color: var(--el-text-color-secondary); }
+.no-proc { color: var(--el-text-color-placeholder); }
+.pq-form { display: flex; align-items: center; gap: 8px; }
+.pq-form .label { color: var(--el-text-color-secondary); font-size: 13px; }
 </style>

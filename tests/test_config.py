@@ -162,3 +162,45 @@ def test_save_service_json_missing_script(tmp_path):
     raw["start"] = {"script": "nope.sh"}
     with pytest.raises(ValueError, match="启动脚本不存在"):
         save_service_json(d, raw)
+
+
+# ------------------------------------------------------------ nodes/hidden ----
+def test_service_nodes_and_hidden():
+    svc = ServiceConfig(name="s", workspace="/data/x",
+                        nodes=["node1", "node4"], hidden=True)
+    assert svc.nodes == ["node1", "node4"]
+    assert svc.hidden is True
+    assert ServiceConfig(name="s", workspace="/data/x").hidden is False
+    assert ServiceConfig(name="s", workspace="/data/x").nodes == []
+
+
+def test_service_nodes_bad_entry():
+    with pytest.raises(Exception, match="nodes 条目非法"):
+        ServiceConfig(name="s", workspace="/data/x", nodes=["bad node!"])
+
+
+def test_task_validate_nodes_whitelist_and_hidden(tmp_path):
+    from backend.config import ConfigStore
+    from backend.tasks import TaskError, TaskManager
+
+    cluster = _write(tmp_path, "cluster.json", {
+        "nodes": [{"name": "node1", "ip": "1.1.1.1"},
+                  {"name": "node2", "ip": "2.2.2.2"},
+                  {"name": "node4", "ip": "4.4.4.4"}],
+    })
+    svc_dir = tmp_path / "services"
+    svc_dir.mkdir()
+    for name, extra in [("etcd", {"nodes": ["node4"]}), ("tmpl", {"hidden": True})]:
+        _svc_dir(svc_dir, name, {"name": name, "workspace": f"/data/{name}", **extra})
+    store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
+    tm = TaskManager(pool=None, store=store, instances=None, data_dir=tmp_path)
+
+    svc, nodes, _ = tm.validate("etcd", "start", ["node4"], {})
+    assert [n.name for n in nodes] == ["node4"]
+
+    with pytest.raises(TaskError, match="目标节点"):
+        tm.validate("etcd", "start", ["node1"], {})
+    with pytest.raises(TaskError, match="模板服务"):
+        tm.validate("tmpl", "start", ["node1"], {})
+    with pytest.raises(TaskError, match="未知节点"):
+        tm.validate("etcd", "start", ["nodeX"], {})

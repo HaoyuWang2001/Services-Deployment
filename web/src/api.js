@@ -15,9 +15,12 @@ async function request(method, url, body) {
 export const api = {
   nodes: () => request('GET', '/api/cluster/nodes'),
   testNode: (name) => request('POST', `/api/cluster/nodes/${encodeURIComponent(name)}/test`),
+  nodePorts: (name) => request('GET', `/api/cluster/nodes/${encodeURIComponent(name)}/ports`),
   reloadConfig: () => request('POST', '/api/cluster/reload'),
   services: () => request('GET', '/api/services'),
   service: (name) => request('GET', `/api/services/${encodeURIComponent(name)}`),
+  createService: (name) => request('POST', '/api/services', { name }),
+  reloadServices: () => request('POST', '/api/services/reload'),
   updateService: (name, payload) =>
     request('PUT', `/api/services/${encodeURIComponent(name)}`, payload),
   reloadService: (name) =>

@@ -1,0 +1,22 @@
+{
+  "name": "example",
+  "description": "服务模板：通过 WebUI「新建服务」或复制本目录创建新服务，字段说明见本目录 README.md",
+  "hidden": true,
+  "nodes": [],
+  "workspace": "/data/services/example",
+  "start": {
+    "script": "start.sh",
+    "args": [],
+    "log": "service.log"
+  },
+  "stop": {
+    "script": "stop.sh",
+    "timeout": 10
+  },
+  "deploy": {
+    "files": ["start.sh", "stop.sh"]
+  },
+  "variables": {
+    "EXAMPLE_VAR": "value"
+  }
+}

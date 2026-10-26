@@ -162,6 +162,8 @@ class ServiceConfig(BaseModel):
     name: str
     description: str = ""
     workspace: str
+    nodes: list[str] = Field(default_factory=list)  # 目标节点白名单，空 = 全部节点
+    hidden: bool = False  # 模板标记：不出现在服务列表，不可启动（如 example）
     start: StartSpec = Field(default_factory=StartSpec)
     stop: StopSpec = Field(default_factory=StopSpec)
     deploy: DeploySpec = Field(default_factory=DeploySpec)
@@ -190,6 +192,9 @@ class ServiceConfig(BaseModel):
         for k in self.variables:
             if not ENV_NAME_RE.match(k):
                 raise ValueError(f"variables 键名非法: {k!r}（须为合法环境变量名）")
+        for n in self.nodes:
+            if not TOKEN_RE.match(n):
+                raise ValueError(f"nodes 条目非法: {n!r}（须为节点名称）")
         return self
 
     def log_path(self, run_id: str) -> str:

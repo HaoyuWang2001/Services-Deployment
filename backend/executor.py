@@ -150,6 +150,53 @@ def parse_archives(stdout: str) -> dict[str, list[dict]]:
     return dict(sorted(archives.items(), reverse=True))
 
 
+# ------------------------------------------------------------- 端口监控 ----
+PROC_RE = re.compile(r'\("([^"]+)",pid=(\d+),fd=\d+\)')
+
+
+def build_ports_command() -> str:
+    """列出监听端口及占用进程（-t tcp -u udp -l 监听 -n 数字 -p 进程 -H 无表头）。"""
+    return "ss -tulnpH"
+
+
+def _split_local(local: str) -> tuple[str, int | None]:
+    addr, _, port = local.rpartition(":")
+    if not port.isdigit():
+        return local, None
+    addr = addr.strip("[]")
+    return addr or "*", int(port)
+
+
+def parse_ports(stdout: str) -> list[dict]:
+    """解析 ss -tulnpH 输出 → 按端口排序的结构化列表。"""
+    entries: list[dict] = []
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        netid, state, local = parts[0].lower(), parts[1], parts[4]
+        proc_part = " ".join(parts[6:])
+        addr, port = _split_local(local)
+        if port is None:
+            continue
+        entries.append({
+            "proto": netid,
+            "state": state,
+            "local_addr": addr,
+            "port": port,
+            "processes": [{"process": n, "pid": int(p)} for n, p in PROC_RE.findall(proc_part)],
+        })
+    return sorted(entries, key=lambda e: (e["port"], e["proto"], e["local_addr"]))
+
+
+async def list_ports(pool: SSHPool, node: Node) -> list[dict]:
+    res = await pool.run(node, build_ports_command(), timeout=15)
+    if not res.ok and not res.stdout:
+        raise ExecError(f"查询端口失败(exit={res.exit_code}): {(res.stderr or '').strip()[:300]}"
+                        "（节点需支持 ss 命令）")
+    return parse_ports(res.stdout)
+
+
 # --------------------------------------------------------------- 执行器 ----
 async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
                         run_id: str, variables: dict[str, str]) -> dict:
