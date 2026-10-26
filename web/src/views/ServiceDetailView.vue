@@ -52,16 +52,9 @@
         </div>
       </div>
       <div class="actions">
-        <el-tooltip :disabled="!blockReasons.length" placement="top" :content="blockReasons.join('；')">
-          <span>
-            <el-button size="small" :disabled="blockReasons.length > 0" @click="submit('deploy')">仅部署文件</el-button>
-          </span>
-        </el-tooltip>
-        <el-tooltip :disabled="!blockReasons.length" placement="top" :content="blockReasons.join('；')">
-          <span>
-            <el-button size="small" type="primary" :disabled="blockReasons.length > 0" @click="submit('start')">启动实例</el-button>
-          </span>
-        </el-tooltip>
+        <el-button size="small" :disabled="blockReasons.length > 0" @click="submit('deploy')">仅部署文件</el-button>
+        <el-button class="start-btn" size="small" type="primary"
+                   :disabled="blockReasons.length > 0" @click="submit('start')">启动实例</el-button>
         <span v-if="blockReasons.length" class="dirty-hint">{{ blockReasons.join('；') }}</span>
         <span v-else class="hint-secondary">重启 / 停止请在下方实例列表中按实例操作</span>
       </div>
@@ -428,6 +421,7 @@ onDeactivated(() => clearInterval(timer))
 .cfg-form { max-width: 760px; }
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
+.actions .start-btn { margin-left: 20px; }
 .dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .dialog-footer .dirty-hint { margin-right: auto; }
 .field-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
