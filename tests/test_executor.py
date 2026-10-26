@@ -34,9 +34,11 @@ def test_start_command_structure():
     cmd = build_start_command(svc, "20261025-120000", {"MASTER_PORT": "2379"})
     assert "cd /data/mooncake/master" in cmd
     assert "mkdir -p logs/20261025-120000 run" in cmd
+    # setsid 独立进程组 + 指纹写入 pid 文件
+    assert "setsid nohup env MASTER_PORT=2379" in cmd
+    assert "/proc/$pid/stat" in cmd
+    assert 'echo "$pid $tick" > run/mooncake-master.pid' in cmd
     assert "> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
-    assert "echo $pid > run/mooncake-master.pid" in cmd
-    assert "env MASTER_PORT=2379" in cmd
     # 带空格的参数被正确引用
     assert "'237 9'" in cmd
     assert "< /dev/null & pid=$!" in cmd
@@ -52,7 +54,7 @@ def test_start_command_tilde_workspace_unquoted():
 def test_start_command_no_env():
     svc = make_svc()
     cmd = build_start_command(svc, "r1", {})
-    assert "nohup bash start.sh" in cmd
+    assert "setsid nohup bash start.sh" in cmd
 
 
 def test_start_command_special_chars_in_var():
@@ -62,12 +64,28 @@ def test_start_command_special_chars_in_var():
 
 
 # ------------------------------------------------------------- stop 命令 ----
-def test_stop_command_default():
+def test_stop_command_strict_semantics():
     svc = make_svc()
     cmd = build_kill_stop_command(svc)
-    assert "run/mooncake-master.pid" in cmd
-    assert "kill -9 $pid" in cmd
-    assert "-lt 5" in cmd  # timeout=5 → 循环 5 次
+    assert "read pid tick < run/mooncake-master.pid" in cmd
+    # 指纹校验：旧格式拒绝 + PID 复用拒绝
+    assert 'echo LEGACY=$pid' in cmd
+    assert 'echo PIDREUSED=$pid' in cmd
+    # 组杀 + 单杀（TERM 与 KILL）
+    assert "kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null" in cmd
+    assert "kill -9 -- -$pid 2>/dev/null; kill -9 $pid 2>/dev/null" in cmd
+    # 严格结果验证
+    assert "echo STOPFAIL=$pid" in cmd
+    assert "echo STOPPED=$pid" in cmd
+    assert cmd.rstrip().endswith("echo STOPFAIL=$pid; exit 1; else echo STOPPED=$pid; fi")
+    assert "-lt 5" in cmd  # timeout=5 → 等待循环 5 次
+
+
+def test_stop_command_legacy_hint_contains_manual_steps():
+    svc = make_svc()
+    cmd = build_kill_stop_command(svc)
+    assert "手动执行" in cmd
+    assert "kill -9 $pid" in cmd  # 提示信息中 PID 变量可展开
 
 
 def test_stop_script_command():
@@ -76,10 +94,13 @@ def test_stop_script_command():
     assert cmd == "cd /data/mooncake/master && bash stop.sh"
 
 
-def test_status_command():
+def test_status_command_tick_check():
     cmd = build_status_command(make_svc())
+    assert "read pid tick < run/mooncake-master.pid" in cmd
+    assert "echo LEGACY $pid" in cmd
+    assert "echo REUSED $pid" in cmd
     assert "echo RUNNING $pid" in cmd
-    assert "echo NOPIDFILE" in cmd
+    assert "echo DEAD $pid" in cmd
 
 
 # -------------------------------------------------------------- 日志命令 ----
@@ -104,6 +125,9 @@ def test_parse_status():
     assert parse_status("RUNNING 123").state == "running"
     assert parse_status("RUNNING 123").pid == 123
     assert parse_status("DEAD 123").state == "dead"
+    assert parse_status("LEGACY 123").state == "legacy"
+    assert parse_status("LEGACY 123").pid == 123
+    assert parse_status("REUSED 123").state == "reused"
     assert parse_status("NOPIDFILE").state == "nopidfile"
     assert parse_status("NOWS").state == "nows"
     assert parse_status("").state == "unknown"

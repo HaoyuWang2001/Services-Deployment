@@ -213,10 +213,9 @@ class TaskManager:
                 self.instances.unregister(service.name, node_name)
 
             elif task.action == "restart":
-                try:
-                    await executor.stop_service(self.pool, node, service)
-                except executor.ExecError as e:
-                    log.warning("restart 停止阶段告警(%s/%s): %s", node_name, service.name, e)
+                # 停止阶段失败（LEGACY/PIDREUSED/STOPFAIL 等）直接中止：
+                # 旧进程未死就启动新实例会导致端口冲突或双实例。
+                await executor.stop_service(self.pool, node, service)
                 self.instances.unregister(service.name, node_name)
                 info = await executor.start_service(
                     self.pool, node, service, task.run_id, task.variables)

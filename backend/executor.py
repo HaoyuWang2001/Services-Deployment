@@ -28,6 +28,11 @@ def shell_ws(workspace: str) -> str:
 
 
 # ------------------------------------------------------------- 命令构建 ----
+# /proc/<pid>/stat 第 22 字段(starttime)是进程唯一指纹：
+# 剥离 "pid (comm) " 前缀后为第 20 列，用于防 PID 复用误杀。
+_TICK_CMD = "sed 's/.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}'"
+
+
 def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str, str]) -> str:
     ws = shell_ws(service.workspace)
     script = shlex.quote(service.start.script)
@@ -40,25 +45,44 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     pidfile = f"run/{service.name}.pid"
     return (
         f"cd {ws} && mkdir -p {shlex.quote(logdir)} run && "
-        f"{{ nohup {env}bash {script}"
+        # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除，
+        # 避免 pid 文件只记录 wrapper shell 而真实服务成为孤儿。
+        f"{{ setsid nohup {env}bash {script}"
         + (f" {args}" if args else "")
         + f" > {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
-        f"echo $pid > {pidfile}; echo PID=$pid; }}"
+        f"tick=$({_TICK_CMD}); "
+        f"echo \"$pid $tick\" > {pidfile}; echo PID=$pid; }}"
     )
 
 
 def build_kill_stop_command(service: ServiceConfig) -> str:
+    """停止命令：指纹校验防误杀 → 整组终止 → 严格验证结果。
+
+    输出与退出码：
+      STOPPED=<pid>   成功（exit 0）；进程本就已死也走此路径
+      LEGACY=<pid>    旧格式 pid 文件（无指纹，升级前启动），需手动处理（exit 1）
+      PIDREUSED=<pid> 指纹不匹配，PID 已被复用，拒绝误杀（exit 1）
+      STOPFAIL=<pid>  组杀+强杀后仍存活，如实报失败（exit 1）
+      NOPIDFILE/NOWS  无 pid 文件 / 未部署（exit 0，视为无需停止）
+    """
     ws = shell_ws(service.workspace)
     pidfile = f"run/{service.name}.pid"
     waits = max(1, int(round(service.stop.timeout)))
+    alive = "{ kill -0 -- -$pid 2>/dev/null || kill -0 $pid 2>/dev/null; }"
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
-        f"pid=$(cat {pidfile}); "
-        f"kill $pid 2>/dev/null; "
-        f"i=0; while [ $i -lt {waits} ] && kill -0 $pid 2>/dev/null; do sleep 1; i=$((i+1)); done; "
-        f"if kill -0 $pid 2>/dev/null; then kill -9 $pid 2>/dev/null; echo KILLED9=$pid; "
-        f"else echo STOPPED=$pid; fi"
+        f"read pid tick < {pidfile}; "
+        f"if ! kill -0 $pid 2>/dev/null; then echo STOPPED=$pid; exit 0; fi; "
+        f"if [ -z \"$tick\" ]; then "
+        f"echo LEGACY=$pid; echo \"旧格式实例(升级前启动): 请在节点上手动执行 kill -9 $pid 并删除 {pidfile}\"; exit 1; fi; "
+        f"ctick=$({_TICK_CMD}); "
+        f"if [ \"$ctick\" != \"$tick\" ]; then echo PIDREUSED=$pid; echo 'PID 已被其他进程复用，为避免误杀已终止停止操作'; exit 1; fi; "
+        f"kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; "
+        f"i=0; while [ $i -lt {waits} ] && {alive}; do sleep 1; i=$((i+1)); done; "
+        f"if {alive}; then kill -9 -- -$pid 2>/dev/null; kill -9 $pid 2>/dev/null; "
+        f"j=0; while [ $j -lt 3 ] && {alive}; do sleep 1; j=$((j+1)); done; fi; "
+        f"if {alive}; then echo STOPFAIL=$pid; exit 1; else echo STOPPED=$pid; fi"
     )
 
 
@@ -73,8 +97,11 @@ def build_status_command(service: ServiceConfig) -> str:
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
-        f"pid=$(cat {pidfile}); "
-        f"if kill -0 $pid 2>/dev/null; then echo RUNNING $pid; else echo DEAD $pid; fi"
+        f"read pid tick < {pidfile}; "
+        f"if ! kill -0 $pid 2>/dev/null; then echo DEAD $pid; exit 0; fi; "
+        f"if [ -z \"$tick\" ]; then echo LEGACY $pid; exit 0; fi; "
+        f"ctick=$({_TICK_CMD}); "
+        f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; else echo RUNNING $pid; fi"
     )
 
 
@@ -111,20 +138,17 @@ def parse_pid(stdout: str) -> Optional[int]:
 
 @dataclass
 class ServiceStatus:
-    state: str  # running | dead | nopidfile | nows | unknown
+    state: str  # running | dead | legacy | reused | nopidfile | nows | unknown
     pid: Optional[int] = None
 
 
 def parse_status(stdout: str) -> ServiceStatus:
     text = stdout.strip()
-    if text.startswith("RUNNING"):
-        return ServiceStatus("running", _pid_of(text))
-    if text.startswith("DEAD"):
-        return ServiceStatus("dead", _pid_of(text))
-    if text.startswith("NOPIDFILE"):
-        return ServiceStatus("nopidfile")
-    if text.startswith("NOWS"):
-        return ServiceStatus("nows")
+    for prefix, state in (("RUNNING", "running"), ("DEAD", "dead"),
+                          ("LEGACY", "legacy"), ("REUSED", "reused"),
+                          ("NOPIDFILE", "nopidfile"), ("NOWS", "nows")):
+        if text.startswith(prefix):
+            return ServiceStatus(state, _pid_of(text))
     return ServiceStatus("unknown")
 
 

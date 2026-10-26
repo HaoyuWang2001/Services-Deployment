@@ -322,10 +322,12 @@ function viewLog(row) {
 }
 
 function statusType(s) {
-  return { running: 'success', dead: 'danger', nopidfile: 'info', nows: 'warning', unknown: 'info' }[s] || 'info'
+  return { running: 'success', dead: 'danger', legacy: 'warning', reused: 'danger',
+           nopidfile: 'info', nows: 'warning', unknown: 'info' }[s] || 'info'
 }
 function statusText(s) {
-  return { running: '运行中', dead: '已退出', nopidfile: '无PID文件', nows: '未部署', unknown: '未知' }[s] || s
+  return { running: '运行中', dead: '已退出', legacy: '旧实例(需手动处理)', reused: 'PID复用',
+           nopidfile: '无PID文件', nows: '未部署', unknown: '未知' }[s] || s
 }
 
 // ---------------------------------------------------------------- 初始化

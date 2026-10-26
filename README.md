@@ -193,7 +193,9 @@ websocat "$BASE/api/logs/ws/logs?service=etcd&nodes=node4&run_id=latest&tail=100
 - 前提：管理端可 SSH 免密登录所有节点（密钥无口令，或使用 ssh-agent）
 - `workspace` 支持绝对路径（推荐）或 `~/` 开头（会在节点上展开）
 - WebUI/API 当前无鉴权，仅适用于可信局域网；请勿暴露到公网
-- 服务以 nohup 方式运行：节点重启后不会自动拉起，需重新启动服务
+- 服务以 nohup + `setsid` 独立进程组运行：停止时**整组终止**（脚本及其全部子进程），脚本内不 exec 真实服务也能可靠停止；节点重启后不会自动拉起
+- 停止采用严格验证：pid 文件含进程启动指纹（防 PID 复用误杀），组杀后确认进程退出，未退出则任务如实报 `STOPFAIL` 失败；指纹不匹配报 `PIDREUSED`（拒绝误杀）、旧格式 pid 文件报 `LEGACY`（升级前启动的实例，需按提示在节点上手动清理）
+- 探活基于同一指纹：`运行中 / 已退出 / 旧实例(需手动处理) / PID复用`，避免 PID 复用误判
 - 端口监控基于 `ss -tulnp`：SSH 用户为 root 时可见全部占用进程，非 root 仅能看到自己进程的 PID/名称
 - 日志按启动时间归档永久保留在节点上，如需清理请自行删除 `logs/` 下的历史批次目录
 - 开发调试前端：`cd web && npm run dev`（Vite 代理到 `localhost:8310`）
