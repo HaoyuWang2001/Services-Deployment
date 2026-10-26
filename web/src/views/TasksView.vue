@@ -2,11 +2,13 @@
   <el-card shadow="never">
     <template #header>
       <div class="card-header">
-        <span>任务历史</span>
-        <div>
-          <el-switch v-model="auto" active-text="自动刷新" style="margin-right: 12px" />
-          <el-button size="small" @click="load" :loading="loading">刷新</el-button>
+        <div class="title-row">
+          <span>任务历史</span>
+          <el-tooltip content="刷新" placement="top">
+            <el-button size="small" circle :icon="Refresh" :loading="loading" @click="load()" />
+          </el-tooltip>
         </div>
+        <el-switch v-model="auto" active-text="自动刷新（3s）" />
       </div>
     </template>
 
@@ -83,6 +85,7 @@
 <script setup>
 import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { ACTION_TEXT, fmtDuration, fmtTime, api } from '../api'
 
 const tasks = ref([])
@@ -90,17 +93,17 @@ const loading = ref(false)
 const auto = ref(true)
 let timer = null
 
-async function load() {
-  loading.value = true
+async function load(silent = false) {
+  if (!silent) loading.value = true
   try {
     const data = await api.tasks(100)
     // 保留已展开行懒加载的 subtasks，避免刷新时丢失
     const old = new Map(tasks.value.map((t) => [t.id, t.subtasks]))
     tasks.value = data.tasks.map((t) => ({ ...t, subtasks: old.get(t.id) || null }))
   } catch (e) {
-    ElMessage.error(`加载失败: ${e.message}`)
+    if (!silent) ElMessage.error(`加载失败: ${e.message}`)
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -126,17 +129,18 @@ function taskStatusText(s) {
 
 function setTimer() {
   clearInterval(timer)
-  if (auto.value) timer = setInterval(load, 3000)
+  if (auto.value) timer = setInterval(() => load(true), 3000)
 }
 
 onMounted(() => { load(); setTimer() })
-onActivated(() => { load(); setTimer() })
+onActivated(() => { load(true); setTimer() })
 onDeactivated(() => clearInterval(timer))
 onUnmounted(() => clearInterval(timer))
 </script>
 
 <style scoped>
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.title-row { display: flex; align-items: center; gap: 8px; }
 .sub-wrap { padding: 4px 12px 12px 48px; }
 .err { color: var(--el-color-danger); }
 .ok { color: var(--el-color-success); }
