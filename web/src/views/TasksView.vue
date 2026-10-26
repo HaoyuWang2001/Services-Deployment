@@ -10,11 +10,11 @@
       </div>
     </template>
 
-    <el-table :data="tasks" v-loading="loading" empty-text="暂无任务" row-key="id">
+    <el-table :data="tasks" v-loading="loading" empty-text="暂无任务" row-key="id" @expand-change="onExpand">
       <el-table-column type="expand">
         <template #default="{ row }">
-          <div class="sub-wrap">
-            <el-table :data="row.subtasks" size="small" border>
+          <div class="sub-wrap" v-loading="row._loading">
+            <el-table :data="row.subtasks || []" size="small" border>
               <el-table-column prop="node" label="节点" width="110" />
               <el-table-column label="结果" width="90">
                 <template #default="{ row: s }">
@@ -34,7 +34,7 @@
               <el-table-column label="日志" min-width="240">
                 <template #default="{ row: s }">
                   <el-link v-if="s.run_id" type="primary" :underline="false"
-                           @click="$router.push({ path: '/logs', query: { service: row.service, node: s.node, run_id: s.run_id } })">
+                           @click="$router.push({ path: '/logs', query: { service: row.service, node: s.node, run_id: s.run_id, connect: '1' } })">
                     {{ s.log_path }}
                   </el-link>
                   <span v-else>-</span>
@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ACTION_TEXT, fmtDuration, fmtTime, api } from '../api'
 
@@ -94,11 +94,26 @@ async function load() {
   loading.value = true
   try {
     const data = await api.tasks(100)
-    tasks.value = data.tasks
+    // 保留已展开行懒加载的 subtasks，避免刷新时丢失
+    const old = new Map(tasks.value.map((t) => [t.id, t.subtasks]))
+    tasks.value = data.tasks.map((t) => ({ ...t, subtasks: old.get(t.id) || null }))
   } catch (e) {
     ElMessage.error(`加载失败: ${e.message}`)
   } finally {
     loading.value = false
+  }
+}
+
+async function onExpand(row, expandedRows) {
+  if (!expandedRows.includes(row) || row.subtasks) return
+  row._loading = true
+  try {
+    const detail = await api.task(row.id)
+    row.subtasks = detail.subtasks
+  } catch (e) {
+    ElMessage.error(`加载任务详情失败: ${e.message}`)
+  } finally {
+    row._loading = false
   }
 }
 
@@ -115,6 +130,8 @@ function setTimer() {
 }
 
 onMounted(() => { load(); setTimer() })
+onActivated(() => { load(); setTimer() })
+onDeactivated(() => clearInterval(timer))
 onUnmounted(() => clearInterval(timer))
 </script>
 

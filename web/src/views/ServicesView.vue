@@ -3,85 +3,68 @@
     <el-alert v-for="e in serviceErrors" :key="e.service" :title="`${e.service}：${e.error}`"
               type="warning" show-icon :closable="false" style="margin-bottom: 12px" />
 
-    <el-card v-for="svc in services" :key="svc.name" shadow="never" class="svc-card">
-      <template #header>
-        <div class="svc-header">
-          <div>
+    <div class="header-row">
+      <span class="hint">点击服务进入子页面：配置编辑 / 启停操作 / 运行实例 / 日志</span>
+      <el-button size="small" @click="load" :loading="loading">刷新</el-button>
+    </div>
+
+    <el-row :gutter="16">
+      <el-col v-for="svc in services" :key="svc.name" :xs="24" :sm="12" :lg="8" style="margin-bottom: 16px">
+        <el-card shadow="hover" class="svc-card" @click="$router.push(`/services/${svc.name}`)">
+          <div class="svc-title">
             <span class="svc-name">{{ svc.name }}</span>
-            <span class="svc-desc">{{ svc.description }}</span>
+            <el-tag v-if="runningCount(svc.name)" type="success" size="small">
+              {{ runningCount(svc.name) }} 节点运行中
+            </el-tag>
+            <el-tag v-else-if="instanceCount(svc.name)" type="info" size="small">
+              {{ instanceCount(svc.name) }} 实例未运行
+            </el-tag>
           </div>
-        </div>
-      </template>
-
-      <el-descriptions :column="3" size="small" border class="svc-info">
-        <el-descriptions-item label="workspace">{{ svc.workspace }}</el-descriptions-item>
-        <el-descriptions-item label="启动脚本">{{ svc.start.script }} <template v-if="svc.start.args?.length">（args: {{ svc.start.args.join(' ') }}）</template></el-descriptions-item>
-        <el-descriptions-item label="日志文件">logs/&lt;run_id&gt;/{{ svc.start.log }}</el-descriptions-item>
-        <el-descriptions-item v-if="svc.stop.script" label="停止脚本">{{ svc.stop.script }}</el-descriptions-item>
-        <el-descriptions-item v-else label="停止方式">按 PID kill（{{ svc.stop.timeout }}s 超时强杀）</el-descriptions-item>
-        <el-descriptions-item v-if="Object.keys(svc.variables).length" label="默认变量">
-          <code v-for="(v, k) in svc.variables" :key="k" class="var-chip">{{ k }}={{ v }}</code>
-        </el-descriptions-item>
-      </el-descriptions>
-
-      <div class="op-area">
-        <div class="node-select">
-          <span class="label">目标节点：</span>
-          <el-checkbox-group v-model="selected[svc.name]">
-            <el-checkbox v-for="n in nodes" :key="n" :value="n">{{ n }}</el-checkbox>
-          </el-checkbox-group>
-        </div>
-
-        <div v-if="Object.keys(svc.variables).length" class="var-form">
-          <span class="label">变量覆盖：</span>
-          <div class="var-inputs">
-            <div v-for="(_, k) in svc.variables" :key="k" class="var-input">
-              <span class="var-key">{{ k }}</span>
-              <el-input v-model="vars[svc.name][k]" size="small" style="width: 220px" :placeholder="`默认 ${svc.variables[k]}`" />
+          <div class="svc-desc">{{ svc.description || '（无描述）' }}</div>
+          <div class="svc-meta">
+            <div class="meta-line"><span class="k">workspace</span><span class="v">{{ svc.workspace }}</span></div>
+            <div class="meta-line"><span class="k">启动脚本</span><span class="v">{{ svc.start.script }}</span></div>
+            <div class="meta-line">
+              <span class="k">日志</span>
+              <span class="v">logs/&lt;run_id&gt;/{{ svc.start.log }}</span>
             </div>
           </div>
-        </div>
+        </el-card>
+      </el-col>
+    </el-row>
 
-        <div class="actions">
-          <el-button size="small" @click="submit(svc, 'deploy')">仅部署文件</el-button>
-          <el-button size="small" type="primary" @click="submit(svc, 'start')">启动</el-button>
-          <el-button size="small" type="warning" @click="submit(svc, 'restart')">重启</el-button>
-          <el-button size="small" type="danger" @click="submit(svc, 'stop')">停止</el-button>
-        </div>
-      </div>
-    </el-card>
-
-    <el-empty v-if="!loading && !services.length" description="services/ 目录下暂无有效服务，请添加后到「集群节点」页重载配置" />
+    <el-empty v-if="!loading && !services.length"
+              description="services/ 目录下暂无有效服务，请添加后到「集群节点」页重载配置" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
-import { ACTION_TEXT, api } from '../api'
+import { onActivated, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { api } from '../api'
 
-const router = useRouter()
 const services = ref([])
 const serviceErrors = ref([])
-const nodes = ref([])
 const loading = ref(false)
-const selected = reactive({})
-const vars = reactive({})
+const instanceSummary = reactive({}) // service -> {running, total}
+
+function runningCount(name) { return instanceSummary[name]?.running || 0 }
+function instanceCount(name) { return instanceSummary[name]?.total || 0 }
 
 async function load() {
   loading.value = true
   try {
-    const [svcData, nodeData] = await Promise.all([api.services(), api.nodes()])
+    const [svcData, instData] = await Promise.all([
+      api.services(),
+      api.instances().catch(() => ({ instances: [] })),
+    ])
     services.value = svcData.services
     serviceErrors.value = svcData.errors
-    nodes.value = nodeData.nodes.map((n) => n.name)
-    for (const s of services.value) {
-      if (!selected[s.name]) selected[s.name] = []
-      if (!vars[s.name]) {
-        vars[s.name] = {}
-        for (const k of Object.keys(s.variables)) vars[s.name][k] = ''
-      }
+    for (const s of services.value) delete instanceSummary[s.name]
+    for (const inst of instData.instances) {
+      const item = instanceSummary[inst.service] || (instanceSummary[inst.service] = { running: 0, total: 0 })
+      item.total += 1
+      if (inst.status === 'running') item.running += 1
     }
   } catch (e) {
     ElMessage.error(`加载失败: ${e.message}`)
@@ -90,46 +73,20 @@ async function load() {
   }
 }
 
-async function submit(svc, action) {
-  const nodesPicked = selected[svc.name] || []
-  if (!nodesPicked.length) {
-    ElMessage.warning('请先勾选目标节点')
-    return
-  }
-  if (action === 'stop' || action === 'restart') {
-    try {
-      await ElMessageBox.confirm(
-        `确定在 ${nodesPicked.join('、')} 上${ACTION_TEXT[action]}服务 ${svc.name}？`,
-        `${ACTION_TEXT[action]}确认`, { type: 'warning' })
-    } catch { return }
-  }
-  const variables = {}
-  for (const [k, v] of Object.entries(vars[svc.name] || {})) {
-    if (v !== '') variables[k] = v
-  }
-  try {
-    const task = await api.createTask({ service: svc.name, action, nodes: nodesPicked, variables })
-    ElMessage.success(`任务已提交（${task.id}），正在跳转任务页查看进度`)
-    router.push('/tasks')
-  } catch (e) {
-    ElMessage.error(`创建任务失败: ${e.message}`)
-  }
-}
-
 onMounted(load)
+onActivated(load)
 </script>
 
 <style scoped>
-.svc-card { margin-bottom: 16px; }
-.svc-name { font-weight: 600; margin-right: 10px; }
-.svc-desc { color: var(--el-text-color-secondary); font-size: 13px; }
-.svc-info { margin-bottom: 14px; }
-.var-chip { background: var(--el-fill-color); padding: 1px 6px; border-radius: 4px; margin-right: 6px; }
-.label { color: var(--el-text-color-secondary); font-size: 13px; }
-.node-select { margin-bottom: 10px; }
-.var-form { margin-bottom: 10px; display: flex; align-items: flex-start; }
-.var-inputs { display: flex; flex-wrap: wrap; gap: 8px; }
-.var-input { display: flex; align-items: center; gap: 6px; }
-.var-key { font-size: 12px; color: var(--el-text-color-regular); }
-.actions { margin-top: 4px; }
+.header-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-bottom: 14px; }
+.hint { color: var(--el-text-color-secondary); font-size: 13px; margin-right: auto; }
+.svc-card { cursor: pointer; transition: border-color .2s; height: 100%; }
+.svc-card:hover { border-color: var(--el-color-primary); }
+.svc-title { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.svc-name { font-weight: 600; font-size: 15px; }
+.svc-desc { color: var(--el-text-color-secondary); font-size: 13px; margin-bottom: 12px; min-height: 20px; }
+.svc-meta { border-top: 1px solid var(--el-border-color-lighter); padding-top: 10px; }
+.meta-line { display: flex; font-size: 12px; line-height: 1.9; }
+.meta-line .k { color: var(--el-text-color-secondary); width: 72px; flex-shrink: 0; }
+.meta-line .v { color: var(--el-text-color-regular); word-break: break-all; font-family: Consolas, monospace; }
 </style>

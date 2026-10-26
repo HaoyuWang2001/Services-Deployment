@@ -2,10 +2,9 @@
   <el-container class="layout">
     <el-aside width="200px" class="aside">
       <div class="brand">Services-Deployment</div>
-      <el-menu router :default-active="$route.path" class="menu">
+      <el-menu router :default-active="menuActive" class="menu">
         <el-menu-item index="/cluster">集群节点</el-menu-item>
         <el-menu-item index="/services">服务管理</el-menu-item>
-        <el-menu-item index="/instances">运行实例</el-menu-item>
         <el-menu-item index="/logs">日志查看</el-menu-item>
         <el-menu-item index="/tasks">任务历史</el-menu-item>
       </el-menu>
@@ -14,12 +13,21 @@
       </div>
     </el-aside>
     <el-main class="main">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <keep-alive>
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </el-main>
   </el-container>
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+const menuActive = computed(() => '/' + (route.path.split('/')[1] || ''))
 </script>
 
 <style scoped>

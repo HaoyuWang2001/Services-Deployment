@@ -121,3 +121,44 @@ def test_clusterconfig_node_lookup():
     cfg = ClusterConfig(nodes=[{"name": "n1", "ip": "1.1.1.1"}])
     assert cfg.node("n1").ip == "1.1.1.1"
     assert cfg.node("nope") is None
+
+
+# ------------------------------------------------------------ 写回/重载 ----
+def test_save_service_json_roundtrip(tmp_path):
+    from backend.config import save_service_json
+    d = _svc_dir(tmp_path, "svc-w", {"name": "svc-w", "workspace": "/data/a",
+                                     "variables": {"K": "1"}})
+    raw = json.loads((d / "service.json").read_text(encoding="utf-8"))
+    raw["workspace"] = "/data/b"
+    raw["start"] = {"script": "start.sh", "args": ["--x"], "log": "svc.log"}
+    raw["stop"] = {"script": None, "timeout": 20}
+    cfg = save_service_json(d, raw)
+    assert cfg.workspace == "/data/b"
+    assert cfg.start.args == ["--x"]
+    assert cfg.stop.script is None and cfg.stop.timeout == 20
+    # 文件真实更新
+    data = json.loads((d / "service.json").read_text(encoding="utf-8"))
+    assert data["workspace"] == "/data/b"
+    assert "script" not in data["stop"]
+    # 不残留临时文件
+    assert not (d / "service.json.tmp").exists()
+
+
+def test_save_service_json_invalid_not_written(tmp_path):
+    from backend.config import save_service_json
+    d = _svc_dir(tmp_path, "svc-bad", {"name": "svc-bad", "workspace": "/data/a"})
+    original = (d / "service.json").read_text(encoding="utf-8")
+    raw = json.loads(original)
+    raw["workspace"] = "not/absolute"
+    with pytest.raises(Exception):
+        save_service_json(d, raw)
+    assert (d / "service.json").read_text(encoding="utf-8") == original
+
+
+def test_save_service_json_missing_script(tmp_path):
+    from backend.config import save_service_json
+    d = _svc_dir(tmp_path, "svc-m", {"name": "svc-m", "workspace": "/data/a"})
+    raw = json.loads((d / "service.json").read_text(encoding="utf-8"))
+    raw["start"] = {"script": "nope.sh"}
+    with pytest.raises(ValueError, match="启动脚本不存在"):
+        save_service_json(d, raw)

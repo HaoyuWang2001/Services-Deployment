@@ -107,11 +107,12 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8310
 
 | 页面 | 功能 |
 |---|---|
-| 集群节点 | 查看 `cluster.json` 节点、SSH 连通性测试、配置热重载 |
-| 服务管理 | 每个服务卡片：勾选目标节点、覆盖变量 → 部署 / 启动 / 重启 / 停止 |
-| 运行实例 | 实例列表 + `kill -0` 探活状态（10s 自动刷新）、快捷停止/看日志 |
-| 日志查看 | 选服务+节点（可多选合并流）+ 运行批次 → WebSocket 实时滚动（`tail -F`）、下载快照 |
-| 任务历史 | 任务列表展开查看每个节点的结果（PID / run_id / 错误 / 耗时） |
+| 集群节点 | 查看 `cluster.json` 节点、SSH 连通性测试（结果保留）、配置热重载 |
+| 服务管理 | 服务列表 → 每个服务一个子页面：配置编辑（workspace/脚本/日志/停止方式/变量，保存写回 service.json，编辑中禁止启停）、单服务重读配置、节点勾选 + 变量覆盖启停操作、该服务运行实例表（探活/停止/查看日志） |
+| 日志查看 | 多标签实时日志：每个标签独立会话（服务+节点+批次），WebSocket `tail -F`、下载快照；从服务页/任务页跳转自动连接 |
+| 任务历史 | 任务列表展开查看每个节点的结果（PID / run_id / 错误 / 耗时），展开时懒加载详情 |
+
+页面切换保留状态（测试结果、日志流缓冲等）；编辑服务配置保存前禁止启动/停止/重启操作。
 
 ## Agent / REST API
 
@@ -126,6 +127,12 @@ curl -s -X POST $BASE/api/cluster/nodes/node1/test
 
 # 列出服务定义
 curl -s $BASE/api/services
+
+# 修改服务配置（写回 service.json；此处未提供的字段保持原值）
+curl -s -X PUT $BASE/api/services/mooncake-master -H 'Content-Type: application/json' \
+  -d '{"workspace":"/data/services/mooncake-master","variables":{"MASTER_PORT":"2379"}}'
+# 重新从磁盘读取某服务的 service.json
+curl -s -X POST $BASE/api/services/mooncake-master/reload
 
 # 在 node1、node2 上启动 mooncake-master（先自动下发文件），覆盖变量
 curl -s -X POST $BASE/api/tasks -H 'Content-Type: application/json' \

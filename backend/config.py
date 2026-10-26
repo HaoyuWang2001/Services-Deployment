@@ -196,6 +196,30 @@ class ServiceConfig(BaseModel):
         return f"{self.workspace}/logs/{run_id}/{self.start.log}"
 
 
+def validate_service_dir(cfg: ServiceConfig, service_dir: Path) -> None:
+    """校验服务配置与其所在目录的一致性，失败抛 ValueError。"""
+    if cfg.name != service_dir.name:
+        raise ValueError(f"name={cfg.name!r} 与目录名 {service_dir.name!r} 不一致")
+    if not (service_dir / cfg.start.script).is_file():
+        raise ValueError(f"启动脚本不存在: {cfg.start.script}")
+    if cfg.stop.script and not (service_dir / cfg.stop.script).is_file():
+        raise ValueError(f"停止脚本不存在: {cfg.stop.script}")
+
+
+def save_service_json(service_dir: Path, raw: dict) -> ServiceConfig:
+    """校验并原子写回 service.json，返回新配置（失败时不落盘）。"""
+    cfg = ServiceConfig(**raw)
+    validate_service_dir(cfg, service_dir)
+    if isinstance(raw.get("stop"), dict) and raw["stop"].get("script") is None:
+        raw["stop"].pop("script", None)
+    path = service_dir / "service.json"
+    tmp = path.with_name("service.json.tmp")
+    tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    cfg.service_dir = service_dir
+    return cfg
+
+
 def load_services(services_dir: Path) -> tuple[dict[str, ServiceConfig], list[dict]]:
     """扫描 services/ 下所有子目录，返回 (服务表, 错误列表)。"""
     services: dict[str, ServiceConfig] = {}
@@ -211,17 +235,9 @@ def load_services(services_dir: Path) -> tuple[dict[str, ServiceConfig], list[di
             continue
         try:
             cfg = ServiceConfig(**json.loads(sj.read_text(encoding="utf-8")))
+            validate_service_dir(cfg, sub)
         except Exception as e:  # noqa: BLE001
             errors.append({"service": sub.name, "error": f"service.json 解析失败: {e}"})
-            continue
-        if cfg.name != sub.name:
-            errors.append({"service": sub.name, "error": f"name={cfg.name!r} 与目录名 {sub.name!r} 不一致"})
-            continue
-        if not (sub / cfg.start.script).is_file():
-            errors.append({"service": sub.name, "error": f"启动脚本不存在: {cfg.start.script}"})
-            continue
-        if cfg.stop.script and not (sub / cfg.stop.script).is_file():
-            errors.append({"service": sub.name, "error": f"停止脚本不存在: {cfg.stop.script}"})
             continue
         cfg.service_dir = sub
         services[cfg.name] = cfg

@@ -17,6 +17,11 @@ export const api = {
   testNode: (name) => request('POST', `/api/cluster/nodes/${encodeURIComponent(name)}/test`),
   reloadConfig: () => request('POST', '/api/cluster/reload'),
   services: () => request('GET', '/api/services'),
+  service: (name) => request('GET', `/api/services/${encodeURIComponent(name)}`),
+  updateService: (name, payload) =>
+    request('PUT', `/api/services/${encodeURIComponent(name)}`, payload),
+  reloadService: (name) =>
+    request('POST', `/api/services/${encodeURIComponent(name)}/reload`),
   createTask: (payload) => request('POST', '/api/tasks', payload),
   tasks: (limit = 100) => request('GET', `/api/tasks?limit=${limit}`),
   task: (id) => request('GET', `/api/tasks/${id}`),
