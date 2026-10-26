@@ -71,14 +71,29 @@
     <el-card shadow="never" class="block">
       <template #header>
         <div class="card-header">
-          <span>运行实例（该服务）</span>
-          <div>
-            <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-right: 12px" />
-            <el-button size="small" @click="loadInstances" :loading="instLoading">刷新</el-button>
+          <div class="inst-title">
+            <span>运行实例</span>
+            <el-tooltip content="刷新" placement="top">
+              <el-button size="small" circle :icon="Refresh" :loading="instLoading" @click="loadInstances()" />
+            </el-tooltip>
+          </div>
+          <div class="inst-actions">
+            <el-button size="small" type="warning" plain
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('restart')">
+              重启选中 ({{ selectedInsts.length }})
+            </el-button>
+            <el-button size="small" type="danger" plain
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('stop')">
+              停止选中 ({{ selectedInsts.length }})
+            </el-button>
+            <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
           </div>
         </div>
       </template>
-      <el-table :data="instances" v-loading="instLoading" size="small" empty-text="暂无实例（尚未启动过）">
+      <el-table ref="instTable" :data="instances" v-loading="instLoading" size="small" row-key="node"
+                @selection-change="(rows) => (selectedInsts = rows)"
+                empty-text="暂无实例（尚未启动过）">
+        <el-table-column type="selection" reserve-selection width="45" />
         <el-table-column prop="node" label="节点" width="110" />
         <el-table-column prop="pid" label="PID" width="90" />
         <el-table-column prop="run_id" label="run_id" width="170" />
@@ -89,11 +104,9 @@
         </el-table-column>
         <el-table-column prop="started_at" label="启动时间" width="180" />
         <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="210">
+        <el-table-column label="操作" width="100">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">查看日志</el-button>
-            <el-button size="small" link type="warning" :disabled="dirty" @click="restartInstance(row)">重启</el-button>
-            <el-button size="small" link type="danger" :disabled="dirty" @click="stopInstance(row)">停止</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -156,6 +169,7 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
 const route = useRoute()
@@ -324,45 +338,39 @@ async function submit(action) {
 const instances = ref([])
 const instLoading = ref(false)
 const autoRefresh = ref(true)
+const selectedInsts = ref([])
+const instTable = ref(null)
 let timer = null
 
-async function loadInstances() {
-  instLoading.value = true
+async function loadInstances(silent = false) {
+  if (!silent) instLoading.value = true
   try {
     const data = await api.instances()
     instances.value = data.instances.filter((i) => i.service === name.value)
   } catch { /* 静默：实例失败不打断页面 */ }
-  finally { instLoading.value = false }
+  finally { if (!silent) instLoading.value = false }
 }
 
 function setTimer() {
   clearInterval(timer)
-  if (autoRefresh.value) timer = setInterval(loadInstances, 10000)
+  if (autoRefresh.value) timer = setInterval(() => loadInstances(true), 10000)
 }
 
-async function stopInstance(row) {
+async function batchInstanceOp(action) {
+  const nodeList = selectedInsts.value.map((r) => r.node)
+  if (!nodeList.length) return
+  const text = action === 'restart' ? '重启' : '停止'
   try {
     await ElMessageBox.confirm(
-      `确定停止 ${row.node} 上的实例（PID ${row.pid ?? '?'}）？`, '停止确认', { type: 'warning' })
+      `确定${text} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）？`
+      + (action === 'restart' ? '重启将生成新的日志批次。' : ''),
+      `${text}确认`, { type: 'warning' })
   } catch { return }
   try {
-    await api.createTask({ service: name.value, action: 'stop', nodes: [row.node] })
-    ElMessage.success('停止任务已提交')
-    setTimeout(loadInstances, 800)
-  } catch (e) {
-    ElMessage.error(`创建任务失败: ${e.message}`)
-  }
-}
-
-async function restartInstance(row) {
-  try {
-    await ElMessageBox.confirm(
-      `确定重启 ${row.node} 上的实例（PID ${row.pid ?? '?'}）？将生成新的日志批次`, '重启确认', { type: 'warning' })
-  } catch { return }
-  try {
-    const task = await api.createTask({ service: name.value, action: 'restart', nodes: [row.node] })
-    ElMessage.success(`重启任务已提交（run_id ${task.run_id}）`)
-    setTimeout(loadInstances, 800)
+    const task = await api.createTask({ service: name.value, action, nodes: nodeList })
+    ElMessage.success(
+      action === 'restart' ? `重启任务已提交（run_id ${task.run_id}）` : `停止任务已提交（${task.id}）`)
+    setTimeout(() => loadInstances(true), 800)
   } catch (e) {
     ElMessage.error(`创建任务失败: ${e.message}`)
   }
@@ -387,6 +395,8 @@ async function init() {
   cfg.value = null
   instances.value = []
   selectedNodes.value = []
+  selectedInsts.value = []
+  instTable.value?.clearSelection()
   cfgDialog.value = false
   clearInterval(timer)
   try {
@@ -405,7 +415,7 @@ async function init() {
 watch(() => name.value, (n, o) => { if (n && n !== o) init() })
 watch(autoRefresh, setTimer)
 onMounted(init)
-onActivated(() => { if (cfg.value && name.value) { loadInstances(); setTimer() } })
+onActivated(() => { if (cfg.value && name.value) { loadInstances(true); setTimer() } })
 onDeactivated(() => clearInterval(timer))
 </script>
 
@@ -433,4 +443,6 @@ onDeactivated(() => clearInterval(timer))
 .var-input { display: flex; align-items: center; gap: 6px; }
 .var-key { font-size: 12px; color: var(--el-text-color-regular); }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
+.inst-title { display: flex; align-items: center; gap: 8px; }
+.inst-actions { display: flex; align-items: center; }
 </style>
