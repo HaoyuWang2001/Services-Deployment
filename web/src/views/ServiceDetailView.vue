@@ -39,8 +39,8 @@
         <el-checkbox-group v-model="selectedNodes">
           <el-checkbox v-for="n in selectableNodes" :key="n" :value="n">{{ n }}</el-checkbox>
         </el-checkbox-group>
-        <el-button link size="small" @click="selectedNodes = [...selectableNodes]">全选</el-button>
-        <el-button link size="small" @click="selectedNodes = []">清空</el-button>
+        <el-button size="small" class="select-all-btn" @click="selectedNodes = [...selectableNodes]">全选</el-button>
+        <el-button size="small" @click="selectedNodes = []">清空</el-button>
       </div>
       <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
         <span class="label">变量覆盖：</span>
@@ -423,6 +423,7 @@ onDeactivated(() => clearInterval(timer))
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
+.node-select .select-all-btn { margin-left: 24px; }
 .dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .dialog-footer .dirty-hint { margin-right: auto; }
 .field-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
