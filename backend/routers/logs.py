@@ -58,12 +58,13 @@ async def list_archives(service: str, node: str,
     svc = _resolve_service(store, service)
     n = _resolve_node(store, node)
     try:
-        archives = await executor.list_archives(pool, n, svc)
+        archives, exit_codes = await executor.list_archives(pool, n, svc)
     except (executor.ExecError, SSHError) as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     current = registry.get(service, node)
     return {
         "archives": archives,
+        "exit_codes": exit_codes,
         "current_run_id": current.run_id if current else None,
     }
 

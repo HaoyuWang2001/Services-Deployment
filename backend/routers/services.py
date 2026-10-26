@@ -105,6 +105,7 @@ class ServiceUpdateRequest(BaseModel):
     description: Optional[str] = None
     workspace: Optional[str] = None
     nodes: Optional[list[str]] = None   # 提供即整体替换；[] = 清空白名单(全部节点)
+    allow_duplicate_start: Optional[bool] = None
     start: Optional[dict] = None        # {script?, args?, log?}
     stop: Optional[dict] = None         # {script?, timeout?}；script 显式传 null 表示清除
     variables: Optional[dict] = None
@@ -130,6 +131,8 @@ async def update_service(name: str, req: ServiceUpdateRequest,
         raw["workspace"] = req.workspace
     if req.nodes is not None:
         raw["nodes"] = req.nodes
+    if req.allow_duplicate_start is not None:
+        raw["allow_duplicate_start"] = req.allow_duplicate_start
     if req.start:
         target = raw.setdefault("start", {})
         for k, v in req.start.items():

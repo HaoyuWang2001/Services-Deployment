@@ -87,9 +87,10 @@ class InstanceRegistry:
                 d["status"] = "unknown"
                 d["note"] = f"配置缺失: {e}"
                 return d
-            st = await executor.service_status(pool, node, svc)
-            d["status"] = st.state  # running | dead | nopidfile | nows | unknown
+            st = await executor.service_status(pool, node, svc, inst.run_id)
+            d["status"] = st.state  # running | dead | legacy | reused | nopidfile | nows | unknown
             d["probe_pid"] = st.pid
+            d["exit_code"] = st.exit_code
             return d
 
         return list(await asyncio.gather(*(_probe(i) for i in items)))

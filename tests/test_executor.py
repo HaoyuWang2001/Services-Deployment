@@ -35,12 +35,16 @@ def test_start_command_structure():
     assert "cd /data/mooncake/master" in cmd
     assert "mkdir -p logs/20261025-120000 run" in cmd
     # setsid 独立进程组 + 指纹写入 pid 文件
-    assert "setsid nohup env MASTER_PORT=2379" in cmd
-    assert "/proc/$pid/stat" in cmd
-    assert 'echo "$pid $tick" > run/mooncake-master.pid' in cmd
+    assert "setsid nohup env MASTER_PORT=2379 bash -c " in cmd
+    # wrapper 捕获退出码
+    assert "echo $rc >" in cmd
+    assert "logs/20261025-120000/exit_code" in cmd
+    assert "exit $rc" in cmd
     assert "> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
-    # 带空格的参数被正确引用
-    assert "'237 9'" in cmd
+    assert 'echo "$pid $tick" > run/mooncake-master.pid' in cmd
+    # 带空格的参数仍被安全引用（嵌套于 bash -c 内层）
+    assert "237 9" in cmd
+    assert "--port" in cmd
     assert "< /dev/null & pid=$!" in cmd
 
 
@@ -54,7 +58,8 @@ def test_start_command_tilde_workspace_unquoted():
 def test_start_command_no_env():
     svc = make_svc()
     cmd = build_start_command(svc, "r1", {})
-    assert "setsid nohup bash start.sh" in cmd
+    assert "setsid nohup bash -c " in cmd
+    assert "env " not in cmd.split("bash -c")[0].split("nohup")[-1]
 
 
 def test_start_command_special_chars_in_var():
@@ -100,7 +105,14 @@ def test_status_command_tick_check():
     assert "echo LEGACY $pid" in cmd
     assert "echo REUSED $pid" in cmd
     assert "echo RUNNING $pid" in cmd
-    assert "echo DEAD $pid" in cmd
+    assert "echo DEAD $pid rc=-" in cmd  # 无 run_id 时无码
+    assert "exit_code" not in cmd
+
+
+def test_status_command_with_run_id_reads_exit_code():
+    cmd = build_status_command(make_svc(), run_id="20261025-120000")
+    assert "logs/20261025-120000/exit_code" in cmd
+    assert "rc=$(cat" in cmd
 
 
 # -------------------------------------------------------------- 日志命令 ----
@@ -124,9 +136,14 @@ def test_parse_pid():
 def test_parse_status():
     assert parse_status("RUNNING 123").state == "running"
     assert parse_status("RUNNING 123").pid == 123
-    assert parse_status("DEAD 123").state == "dead"
+    assert parse_status("RUNNING 123").exit_code is None
+    dead = parse_status("DEAD 123 rc=7")
+    assert dead.state == "dead" and dead.pid == 123 and dead.exit_code == 7
+    dead0 = parse_status("DEAD 123 rc=0")
+    assert dead0.exit_code == 0
+    dead_none = parse_status("DEAD 123 rc=-")
+    assert dead_none.state == "dead" and dead_none.exit_code is None
     assert parse_status("LEGACY 123").state == "legacy"
-    assert parse_status("LEGACY 123").pid == 123
     assert parse_status("REUSED 123").state == "reused"
     assert parse_status("NOPIDFILE").state == "nopidfile"
     assert parse_status("NOWS").state == "nows"
@@ -134,10 +151,22 @@ def test_parse_status():
 
 
 def test_parse_archives():
-    out = "20261025-120000-1/master.log\t2048\n20261025-110000/store.log\t512\nbadline\n"
-    archives = parse_archives(out)
+    out = ("20261025-120000-1/master.log\t2048\n"
+           "20261025-120000-1/exit_code\t2\n"          # 应被排除出文件表
+           "20261025-110000/store.log\t512\n"
+           "EXIT\t20261025-120000-1\t7\n"
+           "EXIT\t20261025-110000\t0\n"
+           "badline\n")
+    archives, exit_codes = parse_archives(out)
     assert list(archives.keys()) == ["20261025-120000-1", "20261025-110000"]
     assert archives["20261025-120000-1"] == [{"file": "master.log", "size": 2048}]
+    assert archives["20261025-110000"] == [{"file": "store.log", "size": 512}]
+    assert exit_codes == {"20261025-120000-1": 7, "20261025-110000": 0}
+
+
+def test_parse_archives_empty():
+    archives, exit_codes = parse_archives("")
+    assert archives == {} and exit_codes == {}
 
 
 def test_shell_ws():

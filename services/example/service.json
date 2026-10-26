@@ -3,6 +3,7 @@
   "description": "服务模板：通过 WebUI「新建服务」或复制本目录创建新服务，字段说明见本目录 README.md",
   "hidden": true,
   "nodes": [],
+  "allow_duplicate_start": false,
   "workspace": "/data/services/example",
   "start": {
     "script": "start.sh",

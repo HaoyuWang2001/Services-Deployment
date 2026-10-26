@@ -175,6 +175,12 @@ def test_service_nodes_and_hidden():
     assert ServiceConfig(name="s", workspace="/data/x").nodes == []
 
 
+def test_service_allow_duplicate_start_default():
+    assert ServiceConfig(name="s", workspace="/data/x").allow_duplicate_start is False
+    assert ServiceConfig(name="s", workspace="/data/x",
+                         allow_duplicate_start=True).allow_duplicate_start is True
+
+
 def test_service_nodes_bad_entry():
     with pytest.raises(Exception, match="nodes 条目非法"):
         ServiceConfig(name="s", workspace="/data/x", nodes=["bad node!"])

@@ -43,13 +43,16 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     logdir = f"logs/{run_id}"
     logfile = f"{logdir}/{service.start.log}"
     pidfile = f"run/{service.name}.pid"
+    # wrapper 捕获脚本退出码写入 logs/<run_id>/exit_code 后以同码退出；
+    # 组杀（停止）时 wrapper 一并被杀、不写文件 → 无退出码 = 未正常结束。
+    inner = (f"bash {script}"
+             + (f" {args}" if args else "")
+             + f"; rc=$?; echo $rc > {shlex.quote(f'{logdir}/exit_code')}; exit $rc")
     return (
         f"cd {ws} && mkdir -p {shlex.quote(logdir)} run && "
-        # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除，
-        # 避免 pid 文件只记录 wrapper shell 而真实服务成为孤儿。
-        f"{{ setsid nohup {env}bash {script}"
-        + (f" {args}" if args else "")
-        + f" > {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
+        # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除。
+        f"{{ setsid nohup {env}bash -c {shlex.quote(inner)} "
+        f"> {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
         f"tick=$({_TICK_CMD}); "
         f"echo \"$pid $tick\" > {pidfile}; echo PID=$pid; }}"
     )
@@ -91,14 +94,20 @@ def build_stop_script_command(service: ServiceConfig) -> str:
     return f"cd {ws} && bash {shlex.quote(service.stop.script)}"
 
 
-def build_status_command(service: ServiceConfig) -> str:
+def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -> str:
+    """探活命令；run_id 提供时，已退出实例附带 exit_code 文件中的退出码（无文件为 -）。"""
     ws = shell_ws(service.workspace)
     pidfile = f"run/{service.name}.pid"
+    if run_id:
+        exit_file = shlex.quote(f"logs/{run_id}/exit_code")
+        dead = f"rc=$(cat {exit_file} 2>/dev/null || echo -n -); echo DEAD $pid rc=$rc; exit 0; "
+    else:
+        dead = "echo DEAD $pid rc=-; exit 0; "
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
         f"read pid tick < {pidfile}; "
-        f"if ! kill -0 $pid 2>/dev/null; then echo DEAD $pid; exit 0; fi; "
+        f"if ! kill -0 $pid 2>/dev/null; then {dead}fi; "
         f"if [ -z \"$tick\" ]; then echo LEGACY $pid; exit 0; fi; "
         f"ctick=$({_TICK_CMD}); "
         f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; else echo RUNNING $pid; fi"
@@ -108,8 +117,11 @@ def build_status_command(service: ServiceConfig) -> str:
 def build_list_archives_command(service: ServiceConfig) -> str:
     ws = shell_ws(service.workspace)
     return (
-        f"cd {ws}/logs 2>/dev/null && find . -mindepth 2 -maxdepth 2 -type f "
-        f"-printf '%P\\t%s\\n' | sort -r; true"
+        f"cd {ws}/logs 2>/dev/null && {{ "
+        f"find . -mindepth 2 -maxdepth 2 -type f ! -name exit_code -printf '%P\\t%s\\n' | sort -r; "
+        f"for f in */exit_code; do [ -f \"$f\" ] && "
+        f"printf 'EXIT\\t%s\\t%s\\n' \"${{f%/exit_code}}\" \"$(cat \"$f\")\"; done; "
+        f"}}; true"
     )
 
 
@@ -140,15 +152,18 @@ def parse_pid(stdout: str) -> Optional[int]:
 class ServiceStatus:
     state: str  # running | dead | legacy | reused | nopidfile | nows | unknown
     pid: Optional[int] = None
+    exit_code: Optional[int] = None  # 已退出实例的退出码；None = 无文件（被终止）或非 dead 状态
 
 
 def parse_status(stdout: str) -> ServiceStatus:
     text = stdout.strip()
+    m = re.search(r"rc=(\d+)", text)
+    exit_code = int(m.group(1)) if m else None
     for prefix, state in (("RUNNING", "running"), ("DEAD", "dead"),
                           ("LEGACY", "legacy"), ("REUSED", "reused"),
                           ("NOPIDFILE", "nopidfile"), ("NOWS", "nows")):
         if text.startswith(prefix):
-            return ServiceStatus(state, _pid_of(text))
+            return ServiceStatus(state, _pid_of(text), exit_code)
     return ServiceStatus("unknown")
 
 
@@ -159,19 +174,26 @@ def _pid_of(text: str) -> Optional[int]:
     return None
 
 
-def parse_archives(stdout: str) -> dict[str, list[dict]]:
-    """解析 find -printf 输出 → {run_id: [{file, size}, ...]}（按 run_id 倒序）。"""
+def parse_archives(stdout: str) -> tuple[dict[str, list[dict]], dict[str, int]]:
+    """解析输出 → (按 run_id 倒序的日志文件表, 各批次退出码表)。"""
     archives: dict[str, list[dict]] = {}
+    exit_codes: dict[str, int] = {}
     for line in stdout.splitlines():
         line = line.strip()
         if not line or "\t" not in line:
             continue
+        if line.startswith("EXIT\t"):
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[2].lstrip("-").isdigit():
+                exit_codes[parts[1]] = int(parts[2])
+            continue
         rel, _, size = line.partition("\t")
         run_id, _, fname = rel.partition("/")
-        if not run_id or not fname or not size.isdigit():
+        if not run_id or not fname or fname == "exit_code" or not size.isdigit():
             continue
         archives.setdefault(run_id, []).append({"file": fname, "size": int(size)})
-    return dict(sorted(archives.items(), reverse=True))
+    return (dict(sorted(archives.items(), reverse=True)),
+            dict(sorted(exit_codes.items(), reverse=True)))
 
 
 # ------------------------------------------------------------- 端口监控 ----
@@ -263,15 +285,16 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig) -> str
     return " | ".join(o for o in outputs if o) or "done"
 
 
-async def service_status(pool: SSHPool, node: Node, service: ServiceConfig) -> ServiceStatus:
+async def service_status(pool: SSHPool, node: Node, service: ServiceConfig,
+                         run_id: Optional[str] = None) -> ServiceStatus:
     try:
-        res = await pool.run(node, build_status_command(service), timeout=10)
+        res = await pool.run(node, build_status_command(service, run_id), timeout=10)
     except SSHError:
-        return ServiceStatus("unknown", None)
+        return ServiceStatus("unknown")
     return parse_status(res.stdout)
 
 
-async def list_archives(pool: SSHPool, node: Node, service: ServiceConfig) -> dict[str, list[dict]]:
+async def list_archives(pool: SSHPool, node: Node, service: ServiceConfig) -> tuple[dict, dict]:
     res = await pool.run(node, build_list_archives_command(service), timeout=15)
     if not res.ok:
         raise ExecError(f"列出日志归档失败: {(res.stderr or '').strip()[:300]}")

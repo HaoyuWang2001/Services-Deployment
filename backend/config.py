@@ -168,6 +168,7 @@ class ServiceConfig(BaseModel):
     workspace: str
     nodes: list[str] = Field(default_factory=list)  # 目标节点白名单，空 = 全部节点
     hidden: bool = False  # 模板标记：不出现在服务列表，不可启动（如 example）
+    allow_duplicate_start: bool = False  # 允许同节点重复启动（默认禁止：已有运行实例时拒绝）
     start: StartSpec = Field(default_factory=StartSpec)
     stop: StopSpec = Field(default_factory=StopSpec)
     deploy: DeploySpec = Field(default_factory=DeploySpec)

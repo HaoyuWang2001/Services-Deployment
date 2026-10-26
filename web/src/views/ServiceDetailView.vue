@@ -90,9 +90,9 @@
         <el-table-column prop="node" label="节点" width="110" />
         <el-table-column prop="pid" label="PID" width="90" />
         <el-table-column prop="run_id" label="run_id" width="170" />
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="140">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+            <el-tag :type="statusType(row)" size="small">{{ statusText(row) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="started_at" label="启动时间" width="180" />
@@ -137,6 +137,10 @@
           </el-select>
           <div class="field-hint">配置后仅允许在这些节点上启动该服务（如 etcd 仅 node4）</div>
         </el-form-item>
+        <el-form-item label="重复启动">
+          <el-switch v-model="form.allowDup" />
+          <div class="field-hint">默认关闭（禁止重复启动）：同节点已有运行中实例时拒绝启动；开启后允许（旧实例进程需自行管理）</div>
+        </el-form-item>
         <el-form-item label="默认变量">
           <div class="vars-editor">
             <div v-for="(row, i) in form.variables" :key="i" class="var-row">
@@ -176,8 +180,8 @@ const selectedNodes = ref([])
 const varsOverride = reactive({})
 
 const form = reactive({
-  description: '', workspace: '', nodes: [], script: '', argsText: '', log: '',
-  stopScript: '', stopTimeout: 10, variables: [],
+  description: '', workspace: '', nodes: [], allowDup: false,
+  script: '', argsText: '', log: '', stopScript: '', stopTimeout: 10, variables: [],
 })
 
 const saving = ref(false)
@@ -198,6 +202,7 @@ function payloadFromCfg(c) {
     description: c.description || '',
     workspace: c.workspace,
     nodes: c.nodes || [],
+    allow_duplicate_start: !!c.allow_duplicate_start,
     start: { script: c.start.script, args: c.start.args || [], log: c.start.log },
     stop: { script: c.stop.script || null, timeout: c.stop.timeout },
     variables: c.variables || {},
@@ -214,6 +219,7 @@ function formPayload() {
     description: form.description,
     workspace: form.workspace.trim(),
     nodes: form.nodes,
+    allow_duplicate_start: form.allowDup,
     start: { script: form.script.trim(), args, log: form.log.trim() },
     stop: { script: form.stopScript.trim() || null, timeout: form.stopTimeout },
     variables,
@@ -227,6 +233,7 @@ function fillFromCfg(c) {
   form.description = c.description || ''
   form.workspace = c.workspace
   form.nodes = [...(c.nodes || [])]
+  form.allowDup = !!c.allow_duplicate_start
   form.script = c.start.script
   form.argsText = (c.start.args || []).join(' ')
   form.log = c.start.log
@@ -374,13 +381,23 @@ function viewLog(row) {
   useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1' } })
 }
 
-function statusType(s) {
-  return { running: 'success', dead: 'danger', legacy: 'warning', reused: 'danger',
-           nopidfile: 'info', nows: 'warning', unknown: 'info' }[s] || 'info'
+function statusType(row) {
+  if (row.status === 'dead') {
+    if (row.exit_code === 0) return 'success'
+    if (row.exit_code != null) return 'danger'
+    return 'warning'  // 无退出码 = 被终止/异常结束
+  }
+  return { running: 'success', legacy: 'warning', reused: 'danger',
+           nopidfile: 'info', nows: 'warning', unknown: 'info' }[row.status] || 'info'
 }
-function statusText(s) {
-  return { running: '运行中', dead: '已退出', legacy: '旧实例(需手动处理)', reused: 'PID复用',
-           nopidfile: '无PID文件', nows: '未部署', unknown: '未知' }[s] || s
+function statusText(row) {
+  if (row.status === 'dead') {
+    if (row.exit_code === 0) return '已退出(0)'
+    if (row.exit_code != null) return `已退出(码=${row.exit_code})`
+    return '已退出(无码)'
+  }
+  return { running: '运行中', legacy: '旧实例(需手动处理)', reused: 'PID复用',
+           nopidfile: '无PID文件', nows: '未部署', unknown: '未知' }[row.status] || row.status
 }
 
 // ---------------------------------------------------------------- 初始化

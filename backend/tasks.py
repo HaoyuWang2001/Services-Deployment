@@ -70,7 +70,15 @@ class TaskManager:
         self._file = data_dir / "tasks.json"
         self._tasks: list[Task] = []  # 新的在前
         self._used_run_ids: set[str] = set()
+        self._start_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._load()
+
+    def _start_lock(self, service: str, node: str) -> asyncio.Lock:
+        key = (service, node)
+        lock = self._start_locks.get(key)
+        if lock is None:
+            lock = self._start_locks[key] = asyncio.Lock()
+        return lock
 
     # ------------------------------------------------------------ 持久化 ----
     def _load(self) -> None:
@@ -197,8 +205,21 @@ class TaskManager:
                 sub.detail = f"已下发 {n} 个文件 → {service.workspace}"
 
             elif task.action == "start":
-                info = await executor.start_service(
-                    self.pool, node, service, task.run_id, task.variables)
+                # 重复启动保护（默认开启）：部署前确认该节点无运行中实例；
+                # 加锁避免并发任务同时通过检查。
+                async with self._start_lock(service.name, node_name):
+                    if not service.allow_duplicate_start:
+                        st = await executor.service_status(self.pool, node, service)
+                        if st.state == "running":
+                            raise executor.ExecError(
+                                f"节点 {node_name} 已有运行中实例(PID {st.pid})，禁止重复启动；"
+                                "请先停止该实例或使用「重启」")
+                        if st.state == "legacy":
+                            raise executor.ExecError(
+                                f"节点 {node_name} 存在旧格式运行实例(PID {st.pid})，"
+                                "请按提示手动处理后再启动")
+                    info = await executor.start_service(
+                        self.pool, node, service, task.run_id, task.variables)
                 sub.pid = info["pid"]
                 sub.run_id = task.run_id
                 sub.log_path = info["log_path"]

@@ -76,6 +76,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8310
   "name": "etcd",                             // 必须与目录名一致
   "description": "etcd 集群",
   "nodes": ["node4"],                         // 目标节点白名单：空/缺省 = 全部节点；配置后仅允许列出的节点
+  "allow_duplicate_start": false,             // 重复启动保护（默认开启）：同节点已有运行实例时拒绝启动
   "workspace": "/data/services/etcd",         // 必填：该服务在各节点上的部署根目录（所有节点同一路径）
   "start": {
     "script": "start.sh",                     // 服务目录内相对路径
@@ -93,6 +94,8 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8310
 - 隐藏标记：`"hidden": true` 的服务仅作模板，列表不显示、接口拒绝启动
 
 **服务与实例**：服务是模板（配置+脚本）；在若干节点上「启动」后，每个 (服务, 节点) 成为一个**实例**——重启、停止、查看日志均针对具体实例操作。
+
+**运行至完成的服务（如编译）**：进程退出后实例显示「已退出」及**退出码**——退出码由启动 wrapper 捕获并写入 `logs/<run_id>/exit_code`（`0` = 成功；非零 = 失败；无码 = 被停止/异常终止）。重跑请使用「重启」（默认的重复启动保护会拒绝在运行中实例上再次启动；`allow_duplicate_start: true` 可关闭保护）。archives 接口同步返回各批次退出码，便于 Agent 判定结果。
 
 **节点目录布局**（`workspace` 即服务根目录）：
 
