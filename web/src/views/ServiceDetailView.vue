@@ -15,9 +15,93 @@
       </div>
     </div>
 
-    <!-- 配置编辑 -->
+    <!-- 启动实例 -->
     <el-card shadow="never" class="block">
-      <template #header><span>服务配置（service.json）</span></template>
+      <template #header>
+        <div class="card-header">
+          <span>启动实例</span>
+          <el-button size="small" :type="dirty ? 'warning' : 'primary'" plain
+                     :disabled="!cfg" @click="cfgDialog = true">修改服务配置</el-button>
+        </div>
+      </template>
+
+      <el-descriptions v-if="cfg" :column="4" size="small" border class="cfg-summary">
+        <el-descriptions-item label="workspace">{{ cfg.workspace }}</el-descriptions-item>
+        <el-descriptions-item label="启动脚本">{{ cfg.start.script }}{{ cfg.start.args?.length ? ' ' + cfg.start.args.join(' ') : '' }}</el-descriptions-item>
+        <el-descriptions-item label="日志文件">logs/&lt;run_id&gt;/{{ cfg.start.log }}</el-descriptions-item>
+        <el-descriptions-item label="目标节点">{{ cfg.nodes?.length ? cfg.nodes.join('、') : '全部节点' }}</el-descriptions-item>
+      </el-descriptions>
+
+      <el-alert v-if="cfg?.nodes?.length" type="info" :closable="false" show-icon
+                :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" style="margin-top: 10px" />
+      <div class="node-select">
+        <span class="label">目标节点：</span>
+        <el-checkbox-group v-model="selectedNodes">
+          <el-checkbox v-for="n in selectableNodes" :key="n" :value="n">{{ n }}</el-checkbox>
+        </el-checkbox-group>
+        <el-button link size="small" @click="selectedNodes = [...selectableNodes]">全选</el-button>
+        <el-button link size="small" @click="selectedNodes = []">清空</el-button>
+      </div>
+      <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
+        <span class="label">变量覆盖：</span>
+        <div class="var-inputs">
+          <div v-for="(_, k) in cfg.variables" :key="k" class="var-input">
+            <span class="var-key">{{ k }}</span>
+            <el-input v-model="varsOverride[k]" size="small" style="width: 220px" :placeholder="`默认 ${cfg.variables[k]}`" />
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <el-tooltip :disabled="!blockReasons.length" placement="top" :content="blockReasons.join('；')">
+          <span>
+            <el-button size="small" :disabled="blockReasons.length > 0" @click="submit('deploy')">仅部署文件</el-button>
+          </span>
+        </el-tooltip>
+        <el-tooltip :disabled="!blockReasons.length" placement="top" :content="blockReasons.join('；')">
+          <span>
+            <el-button size="small" type="primary" :disabled="blockReasons.length > 0" @click="submit('start')">启动实例</el-button>
+          </span>
+        </el-tooltip>
+        <span v-if="blockReasons.length" class="dirty-hint">{{ blockReasons.join('；') }}</span>
+        <span v-else class="hint-secondary">重启 / 停止请在下方实例列表中按实例操作</span>
+      </div>
+    </el-card>
+
+    <!-- 运行实例 -->
+    <el-card shadow="never" class="block">
+      <template #header>
+        <div class="card-header">
+          <span>运行实例（该服务）</span>
+          <div>
+            <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-right: 12px" />
+            <el-button size="small" @click="loadInstances" :loading="instLoading">刷新</el-button>
+          </div>
+        </div>
+      </template>
+      <el-table :data="instances" v-loading="instLoading" size="small" empty-text="暂无实例（尚未启动过）">
+        <el-table-column prop="node" label="节点" width="110" />
+        <el-table-column prop="pid" label="PID" width="90" />
+        <el-table-column prop="run_id" label="run_id" width="170" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="started_at" label="启动时间" width="180" />
+        <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
+        <el-table-column label="操作" width="210">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="viewLog(row)">查看日志</el-button>
+            <el-button size="small" link type="warning" :disabled="dirty" @click="restartInstance(row)">重启</el-button>
+            <el-button size="small" link type="danger" :disabled="dirty" @click="stopInstance(row)">停止</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
+    <!-- 服务配置弹窗 -->
+    <el-dialog v-model="cfgDialog" title="修改服务配置（service.json）" width="820px"
+               :before-close="confirmCloseDialog" :close-on-click-modal="false" append-to-body>
       <el-form label-width="110px" label-position="left" class="cfg-form">
         <el-form-item label="描述">
           <el-input v-model="form.description" placeholder="服务描述" />
@@ -57,74 +141,15 @@
             <el-button size="small" @click="form.variables.push({ key: '', value: '' })">+ 添加变量</el-button>
           </div>
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :disabled="!dirty" :loading="saving" @click="save">保存</el-button>
-          <el-button :disabled="!dirty" @click="discard">放弃修改</el-button>
-          <span v-if="dirty" class="dirty-hint">保存前禁止启动 / 停止 / 重启操作</span>
-        </el-form-item>
       </el-form>
-    </el-card>
-
-    <!-- 启动实例 -->
-    <el-card shadow="never" class="block">
-      <template #header><span>启动实例</span></template>
-      <el-alert v-if="cfg?.nodes?.length" type="info" :closable="false" show-icon
-                :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" style="margin-bottom: 10px" />
-      <div class="node-select">
-        <span class="label">目标节点：</span>
-        <el-checkbox-group v-model="selectedNodes">
-          <el-checkbox v-for="n in selectableNodes" :key="n" :value="n">{{ n }}</el-checkbox>
-        </el-checkbox-group>
-        <el-button link size="small" @click="selectedNodes = [...selectableNodes]">全选</el-button>
-        <el-button link size="small" @click="selectedNodes = []">清空</el-button>
-      </div>
-      <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
-        <span class="label">变量覆盖：</span>
-        <div class="var-inputs">
-          <div v-for="(_, k) in cfg.variables" :key="k" class="var-input">
-            <span class="var-key">{{ k }}</span>
-            <el-input v-model="varsOverride[k]" size="small" style="width: 220px" :placeholder="`默认 ${cfg.variables[k]}`" />
-          </div>
-        </div>
-      </div>
-      <div class="actions">
-        <el-button size="small" :disabled="dirty" @click="submit('deploy')">仅部署文件</el-button>
-        <el-button size="small" type="primary" :disabled="dirty" @click="submit('start')">启动实例</el-button>
-        <span class="dirty-hint">重启 / 停止请在下方实例列表中按实例操作</span>
-      </div>
-    </el-card>
-
-    <!-- 运行实例 -->
-    <el-card shadow="never" class="block">
-      <template #header>
-        <div class="card-header">
-          <span>运行实例（该服务）</span>
-          <div>
-            <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-right: 12px" />
-            <el-button size="small" @click="loadInstances" :loading="instLoading">刷新</el-button>
-          </div>
+      <template #footer>
+        <div class="dialog-footer">
+          <span v-if="dirty" class="dirty-hint">有未保存的修改：保存前禁止启动 / 停止 / 重启操作</span>
+          <el-button :disabled="!dirty" @click="discard">放弃修改</el-button>
+          <el-button type="primary" :disabled="!dirty" :loading="saving" @click="save">保存并关闭</el-button>
         </div>
       </template>
-      <el-table :data="instances" v-loading="instLoading" size="small" empty-text="暂无实例（尚未启动过）">
-        <el-table-column prop="node" label="节点" width="110" />
-        <el-table-column prop="pid" label="PID" width="90" />
-        <el-table-column prop="run_id" label="run_id" width="170" />
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="started_at" label="启动时间" width="180" />
-        <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="210">
-          <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="viewLog(row)">查看日志</el-button>
-            <el-button size="small" link type="warning" :disabled="dirty" @click="restartInstance(row)">重启</el-button>
-            <el-button size="small" link type="danger" :disabled="dirty" @click="stopInstance(row)">停止</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+    </el-dialog>
   </div>
 </template>
 
@@ -150,8 +175,17 @@ const form = reactive({
 
 const saving = ref(false)
 const reloading = ref(false)
+const cfgDialog = ref(false)
 
 // ---------------------------------------------------------------- 配置编辑
+function confirmCloseDialog(done) {
+  if (!dirty.value) { done(); return }
+  ElMessageBox.confirm(
+    '有未保存的修改。关闭后编辑内容仍会保留，可重新打开「修改服务配置」继续编辑；期间启动 / 停止操作保持禁用。',
+    '未保存的修改',
+    { type: 'warning', confirmButtonText: '关闭', cancelButtonText: '继续编辑' },
+  ).then(() => done()).catch(() => {})
+}
 function payloadFromCfg(c) {
   return {
     description: c.description || '',
@@ -195,10 +229,15 @@ function fillFromCfg(c) {
 }
 
 async function save() {
+  if (!form.workspace.trim()) { ElMessage.warning('workspace 不能为空'); return }
+  if (!form.script.trim()) { ElMessage.warning('启动脚本不能为空'); return }
+  if (!form.log.trim()) { ElMessage.warning('日志文件名不能为空'); return }
   saving.value = true
   try {
     cfg.value = await api.updateService(name.value, formPayload())
     rebuildOverride()
+    selectedNodes.value = selectedNodes.value.filter((n) => selectableNodes.value.includes(n))
+    cfgDialog.value = false
     ElMessage.success('配置已保存')
   } catch (e) {
     ElMessage.error(`保存失败: ${e.message}`)
@@ -240,8 +279,20 @@ function rebuildOverride() {
 
 // ---------------------------------------------------------------- 启动实例
 const selectableNodes = computed(() => {
-  if (cfg.value?.nodes?.length) return cfg.value.nodes
-  return nodes.value
+  const cluster = nodes.value
+  if (cfg.value?.nodes?.length) return cfg.value.nodes.filter((n) => cluster.includes(n))
+  return cluster
+})
+
+// 禁止启动/部署的原因（多条并存）
+const blockReasons = computed(() => {
+  const reasons = []
+  if (dirty.value) reasons.push('有未保存的配置修改，请先保存或放弃')
+  if (!nodes.value.length) reasons.push('集群无可用节点（cluster.json 未配置）')
+  else if (cfg.value?.nodes?.length && !selectableNodes.value.length)
+    reasons.push('目标节点白名单中的节点均不在当前集群中')
+  if (!selectedNodes.value.length) reasons.push('请勾选目标节点')
+  return reasons
 })
 
 async function submit(action) {
@@ -336,6 +387,7 @@ async function init() {
   cfg.value = null
   instances.value = []
   selectedNodes.value = []
+  cfgDialog.value = false
   clearInterval(timer)
   try {
     const [svc, nodeData] = await Promise.all([api.service(name.value), api.nodes()])
@@ -364,6 +416,10 @@ onDeactivated(() => clearInterval(timer))
 .head-actions { margin-left: auto; }
 .block { margin-bottom: 16px; }
 .cfg-form { max-width: 760px; }
+.cfg-summary { margin-bottom: 12px; }
+.hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
+.dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.dialog-footer .dirty-hint { margin-right: auto; }
 .field-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .stop-row { display: flex; align-items: center; gap: 10px; }
 .stop-timeout-label { color: var(--el-text-color-secondary); font-size: 13px; }
