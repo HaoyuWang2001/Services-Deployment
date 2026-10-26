@@ -320,8 +320,9 @@ async function submit(action) {
   }
   try {
     const task = await api.createTask({ service: name.value, action, nodes: selectedNodes.value, variables })
-    ElMessage.success(`任务已提交（${task.id}），正在跳转任务页查看进度`)
-    useRouterPush('/tasks')
+    ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
+    setTimeout(() => loadInstances(true), 1000)
+    setTimeout(() => loadInstances(true), 4000)
   } catch (e) {
     ElMessage.error(`创建任务失败: ${e.message}`)
   }
