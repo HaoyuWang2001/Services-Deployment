@@ -46,10 +46,18 @@ class SSHPool:
                 known_hosts=None,
                 client_keys=client_keys,
                 connect_timeout=node.connect_timeout,
+                keepalive_interval=15,
+                keepalive_count_max=4,
             )
         except (asyncssh.Error, OSError) as e:
             raise SSHError(f"连接 {node.name}({node.ip}:{node.port}) 失败: {e}") from e
         log.info("已连接节点 %s(%s:%s)", node.name, node.ip, node.port)
+        return conn
+
+    async def connect_dedicated(self, node: Node) -> asyncssh.SSHClientConnection:
+        """为长生命周期通道（日志流等）建立独立连接：不受连接池丢弃/重建影响。"""
+        conn = await self._connect(node)
+        log.info("节点 %s 建立日志流专用连接", node.name)
         return conn
 
     async def get(self, node: Node) -> asyncssh.SSHClientConnection:
@@ -90,14 +98,6 @@ class SSHPool:
                 await self.drop(node.name)
                 log.warning("节点 %s 连接异常，重连重试: %s", node.name, e)
         raise SSHError(f"在 {node.name} 上执行命令失败: {last_err}")
-
-    async def open_process(self, node: Node, command: str) -> asyncssh.SSHClientProcess:
-        conn = await self.get(node)
-        try:
-            return await conn.create_process(command, encoding="utf-8", errors="replace")
-        except (asyncssh.Error, OSError) as e:
-            await self.drop(node.name)
-            raise SSHError(f"在 {node.name} 上启动进程失败: {e}") from e
 
     async def sftp(self, node: Node) -> asyncssh.SFTPClient:
         conn = await self.get(node)

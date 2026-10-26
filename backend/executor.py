@@ -283,7 +283,29 @@ async def read_log(pool: SSHPool, node: Node, service: ServiceConfig,
 
 
 async def open_log_stream(pool: SSHPool, node: Node, service: ServiceConfig,
-                          run_id: str, log_file: str, tail: int = 100):
-    """打开 tail -F 流式进程，返回 SSHClientProcess（stdout 可异步迭代）。"""
+                          run_id: str, log_file: str, tail: int = 100) -> "LogStreamHandle":
+    """在专用 SSH 连接上打开 tail -F 流（与连接池隔离，池连接重建不会中断日志流）。"""
+    import asyncssh
+
     cmd = build_log_read_command(service, run_id, log_file, tail, follow=True)
-    return await pool.open_process(node, cmd)
+    conn = await pool.connect_dedicated(node)
+    try:
+        proc = await conn.create_process(cmd, encoding="utf-8", errors="replace")
+    except (asyncssh.Error, OSError) as e:
+        conn.close()
+        raise SSHError(f"在 {node.name} 上启动日志流失败: {e}") from e
+    return LogStreamHandle(conn=conn, proc=proc)
+
+
+@dataclass
+class LogStreamHandle:
+    """日志流句柄：持有专用连接与 tail 进程，关闭时一并释放。"""
+    conn: object
+    proc: object
+
+    def close(self) -> None:
+        for target in (self.proc, self.conn):
+            try:
+                target.close()
+            except Exception:  # noqa: BLE001
+                pass

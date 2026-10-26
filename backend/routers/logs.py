@@ -109,6 +109,7 @@ async def _stream_node(store: ConfigStore, pool: SSHPool, queue: asyncio.Queue,
     except KeyError as e:
         await put({"type": "error", "node": node_name, "message": str(e)})
         return
+    handle = None
     try:
         rid = run_id
         if rid == "latest":
@@ -119,9 +120,9 @@ async def _stream_node(store: ConfigStore, pool: SSHPool, queue: asyncio.Queue,
                 return
         await put({"type": "meta", "node": node_name, "run_id": rid,
                    "file": log_file, "message": "已连接日志流"})
-        proc = await executor.open_log_stream(pool, node, svc, rid, log_file, tail)
-        assert proc.stdout is not None
-        async for line in proc.stdout:
+        handle = await executor.open_log_stream(pool, node, svc, rid, log_file, tail)
+        assert handle.proc.stdout is not None
+        async for line in handle.proc.stdout:
             await put({"type": "line", "node": node_name, "data": line.rstrip("\n")})
         await put({"type": "ended", "node": node_name, "message": "日志流已结束(tail 退出)"})
     except (SSHError, executor.ExecError) as e:
@@ -130,6 +131,9 @@ async def _stream_node(store: ConfigStore, pool: SSHPool, queue: asyncio.Queue,
         raise
     except Exception as e:  # noqa: BLE001
         await put({"type": "error", "node": node_name, "message": f"未知错误: {e}"})
+    finally:
+        if handle is not None:
+            handle.close()
 
 
 @router.websocket("/ws/logs")

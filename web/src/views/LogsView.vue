@@ -6,26 +6,26 @@
         <div class="ctrl-row">
           <div class="ctrl-item">
             <span class="label">服务</span>
-            <el-select v-model="tab.service" filterable placeholder="选择服务" size="small" style="width: 180px" @change="onServiceChange(tab)">
+            <el-select v-model="tab.service" filterable placeholder="选择服务" size="small" style="width: 170px" @change="onServiceChange(tab)">
               <el-option v-for="s in services" :key="s" :label="s" :value="s" />
             </el-select>
           </div>
           <div class="ctrl-item">
             <span class="label">节点</span>
-            <el-select v-model="tab.nodeSel" multiple filterable placeholder="可多选合并" size="small" style="width: 260px" @change="loadRuns(tab)">
+            <el-select v-model="tab.nodeSel" multiple filterable placeholder="可多选合并" size="small" style="width: 240px" @change="loadRuns(tab)">
               <el-option v-for="n in nodes" :key="n" :label="n" :value="n" />
             </el-select>
           </div>
           <div class="ctrl-item">
             <span class="label">运行批次</span>
-            <el-select v-model="tab.runId" size="small" style="width: 180px" :loading="tab.runsLoading">
+            <el-select v-model="tab.runId" size="small" style="width: 170px" :loading="tab.runsLoading">
               <el-option label="最新(latest)" value="latest" />
               <el-option v-for="r in tab.runOptions" :key="r" :label="r" :value="r" />
             </el-select>
           </div>
           <div class="ctrl-item">
             <span class="label">尾部行数</span>
-            <el-input-number v-model="tab.tail" :min="10" :max="10000" :step="50" size="small" style="width: 110px" />
+            <el-input-number v-model="tab.tail" :min="10" :max="10000" :step="50" size="small" style="width: 105px" />
           </div>
           <div class="ctrl-actions">
             <el-button size="small" :type="tab.connected ? 'danger' : 'primary'" @click="toggle(tab)">
@@ -34,13 +34,35 @@
             <el-button size="small" @click="tab.lines = []">清屏</el-button>
             <el-button size="small" :disabled="!tab.service || !tab.nodeSel.length" @click="download(tab)">下载快照</el-button>
             <el-switch v-model="tab.autoscroll" size="small" active-text="自动滚动" />
+            <el-switch v-model="tab.autoReconnect" size="small" active-text="自动重连" />
           </div>
         </div>
 
+        <div class="search-row">
+          <el-input v-model="tab.search" size="small" clearable style="width: 300px"
+                    placeholder="搜索当前日志（忽略大小写，Enter 下一个）"
+                    @keydown.enter.prevent="jumpMatch(tab, $event.shiftKey ? -1 : 1)"
+                    @keydown.esc.prevent="tab.search = ''" />
+          <span class="match-count">{{ matchCountText(tab) }}</span>
+          <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, 'first')">首个</el-button>
+          <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, -1)">上一个</el-button>
+          <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, 1)">下一个</el-button>
+          <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, 'last')">最后一个</el-button>
+          <el-switch v-model="tab.filterOnly" size="small" active-text="仅显示匹配行" :disabled="!matchInfo(tab).kw" />
+          <span v-if="tab.reconnecting" class="reconnect-hint">⟳ 自动重连中（第 {{ tab.reconnectAttempts }} 次）</span>
+        </div>
+
         <div class="terminal" :ref="(el) => setTerm(tab.id, el)">
-          <div v-for="(l, i) in tab.lines" :key="i" class="line" :class="l.kind">
-            <span v-if="l.kind === 'line'" class="node-tag" :style="{ color: nodeColor(l.node) }">[{{ l.node }}]</span>
-            <span class="text">{{ l.text }}</span>
+          <div v-for="item in displayLines(tab)" :key="item.srcIdx" class="line"
+               :class="[item.kind, { 'cur-match': isCurrentMatch(tab, item.srcIdx) }]"
+               :data-line="item.srcIdx">
+            <span v-if="item.kind === 'line'" class="node-tag" :style="{ color: nodeColor(item.node) }">[{{ item.node }}]</span>
+            <span class="text">
+              <template v-for="(seg, i) in segments(tab, item)" :key="i">
+                <mark v-if="seg.hit" class="hit">{{ seg.t }}</mark>
+                <template v-else>{{ seg.t }}</template>
+              </template>
+            </span>
           </div>
           <div v-if="!tab.lines.length" class="empty">选择服务与节点后点击「连接」，实时日志将在此滚动显示（tail -F）</div>
         </div>
@@ -56,7 +78,7 @@
 </template>
 
 <script setup>
-import { nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { api } from '../api'
@@ -100,7 +122,89 @@ function scrollTerm(tab) {
   })
 }
 
-// ---------------------------------------------------------------- 标签管理
+// ---------------------------------------------------------------- 搜索 ----
+const searchIndex = computed(() => {
+  const out = new Map()
+  for (const tab of tabs) {
+    const kw = (tab.search || '').trim().toLowerCase()
+    const list = []
+    const set = new Set()
+    if (kw) {
+      tab.lines.forEach((l, i) => {
+        if (l.text.toLowerCase().includes(kw)) {
+          list.push(i)
+          set.add(i)
+        }
+      })
+    }
+    out.set(tab.id, { kw, list, set })
+  }
+  return out
+})
+
+function matchInfo(tab) {
+  return searchIndex.value.get(tab.id) || { kw: '', list: [], set: new Set() }
+}
+
+function curIdx(tab) {
+  const { list } = matchInfo(tab)
+  return list.length ? Math.min(Math.max(tab.matchIdx, 0), list.length - 1) : -1
+}
+
+function matchCountText(tab) {
+  const { kw, list } = matchInfo(tab)
+  if (!kw) return ''
+  const n = list.length ? curIdx(tab) + 1 : 0
+  return `${n}/${list.length}`
+}
+
+function displayLines(tab) {
+  const { kw, set } = matchInfo(tab)
+  const arr = tab.lines.map((l, i) => ({ ...l, srcIdx: i }))
+  if (kw && tab.filterOnly) return arr.filter((x) => set.has(x.srcIdx))
+  return arr
+}
+
+function isCurrentMatch(tab, srcIdx) {
+  const { kw, list } = matchInfo(tab)
+  return !!kw && list[curIdx(tab)] === srcIdx
+}
+
+function segments(tab, item) {
+  const { kw } = matchInfo(tab)
+  if (!kw) return [{ t: item.text, hit: false }]
+  const text = item.text
+  const lower = text.toLowerCase()
+  const out = []
+  let pos = 0
+  while (true) {
+    const idx = lower.indexOf(kw, pos)
+    if (idx === -1) break
+    if (idx > pos) out.push({ t: text.slice(pos, idx), hit: false })
+    out.push({ t: text.slice(idx, idx + kw.length), hit: true })
+    pos = idx + kw.length
+  }
+  if (pos < text.length) out.push({ t: text.slice(pos), hit: false })
+  return out.length ? out : [{ t: '', hit: false }]
+}
+
+function jumpMatch(tab, dir) {
+  const { list } = matchInfo(tab)
+  if (!list.length) return
+  let idx = curIdx(tab)
+  if (dir === 'first') idx = 0
+  else if (dir === 'last') idx = list.length - 1
+  else idx = (idx + dir + list.length) % list.length
+  tab.matchIdx = idx
+  tab.autoscroll = false
+  const srcIdx = list[idx]
+  nextTick(() => {
+    const el = terms.get(tab.id)?.querySelector(`[data-line="${srcIdx}"]`)
+    if (el) el.scrollIntoView({ block: 'center' })
+  })
+}
+
+// ---------------------------------------------------------------- 标签管理 ----
 function newTab(preset = {}, autoConnect = false) {
   tabSeq += 1
   const tab = reactive({
@@ -110,6 +214,14 @@ function newTab(preset = {}, autoConnect = false) {
     runId: preset.runId || 'latest',
     tail: 100,
     autoscroll: true,
+    autoReconnect: true,
+    manualStop: false,
+    reconnecting: false,
+    reconnectAttempts: 0,
+    reconnectTimer: null,
+    search: '',
+    filterOnly: false,
+    matchIdx: 0,
     lines: [],
     connected: false,
     ws: null,
@@ -126,6 +238,7 @@ function newTab(preset = {}, autoConnect = false) {
 function closeTab(id) {
   const tab = tabs.find((t) => String(t.id) === String(id))
   if (!tab) return
+  clearTimeout(tab.reconnectTimer)
   disconnectWs(tab)
   const idx = tabs.indexOf(tab)
   tabs.splice(idx, 1)
@@ -135,7 +248,7 @@ function closeTab(id) {
   }
 }
 
-// ---------------------------------------------------------------- 运行批次
+// ---------------------------------------------------------------- 运行批次 ----
 async function loadRuns(tab) {
   if (!tab.service || !tab.nodeSel.length) { tab.runOptions = []; return }
   tab.runsLoading = true
@@ -155,7 +268,7 @@ function onServiceChange(tab) {
   loadRuns(tab)
 }
 
-// ---------------------------------------------------------------- WS 连接
+// ---------------------------------------------------------------- WS 连接 ----
 function disconnectWs(tab) {
   if (tab.ws) {
     tab.ws.onclose = null
@@ -165,8 +278,24 @@ function disconnectWs(tab) {
   tab.connected = false
 }
 
+function scheduleReconnect(tab) {
+  if (!tab.autoReconnect || tab.manualStop) return
+  if (!tabs.includes(tab) || tab.reconnectTimer) return
+  tab.reconnecting = true
+  tab.reconnectAttempts += 1
+  push(tab, 'notice', '', `⟳ 3s 后自动重连（第 ${tab.reconnectAttempts} 次）...`)
+  tab.reconnectTimer = setTimeout(() => {
+    tab.reconnectTimer = null
+    if (tabs.includes(tab) && !tab.manualStop) connect(tab)
+  }, 3000)
+}
+
 function toggle(tab) {
   if (tab.connected) {
+    tab.manualStop = true
+    clearTimeout(tab.reconnectTimer)
+    tab.reconnectTimer = null
+    tab.reconnecting = false
     disconnectWs(tab)
     push(tab, 'notice', '', '已断开连接')
   } else {
@@ -179,6 +308,9 @@ function connect(tab) {
     ElMessage.warning('请先选择服务与节点')
     return
   }
+  tab.manualStop = false
+  clearTimeout(tab.reconnectTimer)
+  tab.reconnectTimer = null
   disconnectWs(tab)
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const params = new URLSearchParams({
@@ -189,19 +321,29 @@ function connect(tab) {
   })
   push(tab, 'notice', '', `连接 ${tab.service} @ ${tab.nodeSel.join(', ')}（run_id=${tab.runId || 'latest'}）...`)
   tab.ws = new WebSocket(`${proto}://${location.host}/api/logs/ws/logs?${params}`)
-  tab.ws.onopen = () => { tab.connected = true }
+  tab.ws.onopen = () => {
+    tab.connected = true
+    tab.reconnecting = false
+    tab.reconnectAttempts = 0
+  }
   tab.ws.onmessage = (ev) => {
     try {
       const m = JSON.parse(ev.data)
       if (m.type === 'line') push(tab, 'line', m.node, m.data)
       else if (m.type === 'meta') push(tab, 'notice', m.node, `● 已连接 ${m.node} 的日志流（run_id=${m.run_id}，文件 ${m.file}）`)
-      else if (m.type === 'error') push(tab, 'error', m.node, `✖ ${m.node}: ${m.message}`)
-      else if (m.type === 'ended') push(tab, 'notice', m.node, `○ ${m.node}: ${m.message}`)
+      else if (m.type === 'error') {
+        push(tab, 'error', m.node, `✖ ${m.node}: ${m.message}`)
+        scheduleReconnect(tab)
+      } else if (m.type === 'ended') {
+        push(tab, 'notice', m.node, `○ ${m.node}: ${m.message}`)
+        scheduleReconnect(tab)
+      }
     } catch { /* ignore */ }
   }
   tab.ws.onclose = () => {
     tab.connected = false
     push(tab, 'notice', '', '连接已关闭')
+    scheduleReconnect(tab)
   }
   tab.ws.onerror = () => push(tab, 'error', '', 'WebSocket 错误')
 }
@@ -212,7 +354,7 @@ function download(tab) {
   window.open(url, '_blank')
 }
 
-// ---------------------------------------------------------------- 路由进入
+// ---------------------------------------------------------------- 路由进入 ----
 function handleQuery() {
   const q = route.query
   if (!q.service) return
@@ -249,18 +391,27 @@ onMounted(async () => {
   }
   handleQuery()
 })
-onUnmounted(() => tabs.forEach(disconnectWs))
+onUnmounted(() => tabs.forEach((t) => {
+  clearTimeout(t.reconnectTimer)
+  disconnectWs(t)
+}))
 </script>
 
 <style scoped>
 .logs-page { display: flex; flex-direction: column; height: 100%; }
 .tabs { display: flex; flex-direction: column; height: 100%; }
 .tabs :deep(.el-tabs__content) { flex: 1; overflow: hidden; }
-.tabs :deep(.el-tab-pane) { height: 100%; display: flex; flex-direction: column; gap: 10px; }
-.ctrl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; flex-shrink: 0; }
+.tabs :deep(.el-tab-pane) { height: 100%; display: flex; flex-direction: column; gap: 8px; }
+.ctrl-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex-shrink: 0; }
 .ctrl-item { display: flex; align-items: center; gap: 6px; }
 .ctrl-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .label { color: var(--el-text-color-secondary); font-size: 13px; }
+.search-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex-shrink: 0;
+  background: var(--el-fill-color-light); border-radius: 6px; padding: 6px 10px;
+}
+.match-count { color: var(--el-text-color-secondary); font-size: 12px; min-width: 44px; text-align: center; font-family: Consolas, monospace; }
+.reconnect-hint { margin-left: auto; color: var(--el-color-warning); font-size: 12px; }
 .terminal {
   flex: 1;
   background: #1e1e2e;
@@ -271,12 +422,15 @@ onUnmounted(() => tabs.forEach(disconnectWs))
   font-size: 13px;
   line-height: 1.6;
   overflow: auto;
-  min-height: 260px;
+  min-height: 220px;
 }
 .line { white-space: pre-wrap; word-break: break-all; }
 .line.error { color: #f38ba8; }
 .line.notice { color: #6c7086; font-style: italic; }
+.line.cur-match { background: rgba(64, 158, 255, 0.18); border-radius: 3px; }
 .node-tag { margin-right: 8px; font-weight: 600; }
+.hit { background: #f9e79f; color: #1e1e2e; border-radius: 2px; padding: 0 1px; }
+.line.cur-match .hit { background: #409eff; color: #fff; }
 .empty { color: #6c7086; padding: 40px 0; text-align: center; }
 .empty-page { display: flex; align-items: center; justify-content: center; height: 100%; }
 </style>
