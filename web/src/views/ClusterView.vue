@@ -20,6 +20,14 @@
         <el-table-column prop="username" label="用户名" width="100" />
         <el-table-column prop="port" label="端口" width="80" />
         <el-table-column prop="private_key" label="私钥" min-width="180" show-overflow-tooltip />
+        <el-table-column label="sudo" width="70">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.sudo" content="特权操作（端口监控）经 sudo -n 执行" placement="top">
+              <el-tag type="warning" size="small">sudo</el-tag>
+            </el-tooltip>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="连接状态" width="120">
           <template #default="{ row }">
             <el-tag v-if="results[row.name]?.ok" type="success" size="small">正常</el-tag>

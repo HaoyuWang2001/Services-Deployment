@@ -15,6 +15,8 @@ tcp   LISTEN   0      511          0.0.0.0:https         0.0.0.0:*
 
 def test_ports_command():
     assert build_ports_command() == "ss -tulnpH"
+    assert build_ports_command(False) == "ss -tulnpH"
+    assert build_ports_command(True) == "sudo -n ss -tulnpH"
 
 
 def test_parse_ports_basic():

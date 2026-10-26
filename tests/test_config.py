@@ -18,19 +18,20 @@ def _write(tmp_path: Path, name: str, data) -> Path:
 # ------------------------------------------------------------------ cluster
 def test_cluster_defaults_merge(tmp_path):
     p = _write(tmp_path, "cluster.json", {
-        "defaults": {"username": "openeuler", "port": 2222},
+        "defaults": {"username": "openeuler", "port": 2222, "sudo": True},
         "nodes": [
             {"name": "n1", "ip": "10.0.0.1"},
-            {"name": "n2", "ip": "10.0.0.2", "port": 22, "username": "root"},
+            {"name": "n2", "ip": "10.0.0.2", "port": 22, "username": "root", "sudo": False},
         ],
     })
     cfg = load_cluster(p)
     resolved = {n.name: n for n in cfg.resolved}
     assert resolved["n1"].username == "openeuler"
     assert resolved["n1"].port == 2222
+    assert resolved["n1"].sudo is True       # 继承 defaults
     assert resolved["n2"].port == 22
     assert resolved["n2"].username == "root"
-    assert resolved["n1"].private_key == "~/.ssh/id_rsa"
+    assert resolved["n2"].sudo is False      # 节点覆盖
 
 
 def test_cluster_default_config(tmp_path):

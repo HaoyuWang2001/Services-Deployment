@@ -178,9 +178,14 @@ def parse_archives(stdout: str) -> dict[str, list[dict]]:
 PROC_RE = re.compile(r'\("([^"]+)",pid=(\d+),fd=\d+\)')
 
 
-def build_ports_command() -> str:
-    """列出监听端口及占用进程（-t tcp -u udp -l 监听 -n 数字 -p 进程 -H 无表头）。"""
-    return "ss -tulnpH"
+def build_ports_command(sudo: bool = False) -> str:
+    """列出监听端口及占用进程（-t tcp -u udp -l 监听 -n 数字 -p 进程 -H 无表头）。
+
+    sudo=True 时经 `sudo -n` 提权以获取全部进程归属（要求 sudoers 免密放行）；
+    用 -n 确保未放行时立即失败而非挂起等待密码。
+    """
+    prefix = "sudo -n " if sudo else ""
+    return f"{prefix}ss -tulnpH"
 
 
 def _split_local(local: str) -> tuple[str, int | None]:
@@ -214,10 +219,15 @@ def parse_ports(stdout: str) -> list[dict]:
 
 
 async def list_ports(pool: SSHPool, node: Node) -> list[dict]:
-    res = await pool.run(node, build_ports_command(), timeout=15)
+    res = await pool.run(node, build_ports_command(node.sudo), timeout=15)
     if not res.ok and not res.stdout:
-        raise ExecError(f"查询端口失败(exit={res.exit_code}): {(res.stderr or '').strip()[:300]}"
-                        "（节点需支持 ss 命令）")
+        err = (res.stderr or "").strip()
+        if node.sudo:
+            hint = ""
+            if any(k in err.lower() for k in ("password", "not allowed", "sorry", "authentication", "not in the sudoers")):
+                hint = "（sudoers 未放行免密，需配置如: user ALL=(root) NOPASSWD: /usr/sbin/ss）"
+            raise ExecError(f"sudo 提权查询端口失败(exit={res.exit_code}): {err[:200]}{hint}")
+        raise ExecError(f"查询端口失败(exit={res.exit_code}): {err[:300]}（节点需支持 ss 命令）")
     return parse_ports(res.stdout)
 
 

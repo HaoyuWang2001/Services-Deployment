@@ -3,11 +3,12 @@
     "username": "root",
     "port": 22,
     "private_key": "~/.ssh/id_rsa",
-    "connect_timeout": 10
+    "connect_timeout": 10,
+    "sudo": false
   },
   "nodes": [
     { "name": "node1", "ip": "192.168.0.1" },
     { "name": "node2", "ip": "192.168.0.2" },
-    { "name": "node3", "ip": "192.168.0.3" }
+    { "name": "node3", "ip": "192.168.0.3", "sudo": true }
   ]
 }

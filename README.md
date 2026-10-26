@@ -50,6 +50,7 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 
 - `defaults` 提供全局默认值，节点内同名字段可覆盖（`name` / `ip` 必填）
 - `private_key` 指向管理端私钥文件；若不存在则回退到 ssh-agent / 默认密钥
+- `sudo`（默认 false）：普通用户部署时，端口监控等特权操作经 `sudo -n` 提权；节点级可覆盖
 
 ### 3. 启动后端
 
@@ -197,7 +198,12 @@ websocat "$BASE/api/logs/ws/logs?service=etcd&nodes=node4&run_id=latest&tail=100
 - 停止采用严格验证：pid 文件含进程启动指纹（防 PID 复用误杀），组杀后确认进程退出，未退出则任务如实报 `STOPFAIL` 失败；指纹不匹配报 `PIDREUSED`（拒绝误杀）、旧格式 pid 文件报 `LEGACY`（升级前启动的实例，需按提示在节点上手动清理）
 - 探活基于同一指纹：`运行中 / 已退出 / 旧实例(需手动处理) / PID复用`，避免 PID 复用误判
 - 日志流使用**独立 SSH 专用连接**（与连接池隔离，池连接重建/异常不会中断日志流），并启用 keepalive（15s）检测死链；WebUI 意外断开时自动重连
-- 端口监控基于 `ss -tulnp`：SSH 用户为 root 时可见全部占用进程，非 root 仅能看到自己进程的 PID/名称
+- 端口监控基于 `ss -tulnp`：SSH 用户为 root 时可见全部占用进程；普通用户仅能看到自己进程——为节点配置 `sudo: true` 后经 `sudo -n ss` 提权获取完整信息
+- 从 root 切换到普通用户（具备免密 sudo）的操作清单：
+  1. 节点上为普通用户配置 sudoers（推荐最小化放行）：`echo 'openeuler ALL=(root) NOPASSWD: /usr/sbin/ss' > /etc/sudoers.d/sd-ports && chmod 440 /etc/sudoers.d/sd-ports`（ss 路径以 `which ss` 为准；全量免密也可用）
+  2. 存量 workspace 变更归属：`chown -R openeuler: /data/services/xxx`
+  3. 旧的 root 实例按停止失败提示（LEGACY）在节点上手动清理后重新启动
+  4. `cluster.json` 修改 `username` 并按需启用 `sudo`，重新加载配置
 - 日志按启动时间归档永久保留在节点上，如需清理请自行删除 `logs/` 下的历史批次目录
 - 开发调试前端：`cd web && npm run dev`（Vite 代理到 `localhost:8310`）
 

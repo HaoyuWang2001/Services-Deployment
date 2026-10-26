@@ -57,7 +57,8 @@ async def node_ports(name: str, store: ConfigStore = Depends(get_store),
         return {"ok": False, "detail": str(e), "ports": [], "warning": None}
     warning = None
     if ports and not any(p["processes"] for p in ports):
-        warning = "未获取到进程信息：SSH 用户可能非 root"
+        warning = ("未获取到进程信息：SSH 用户非 root 且未启用 sudo"
+                   "（可在 cluster.json 中为该节点配置 sudo: true）")
     return {"ok": True, "ports": ports, "warning": warning, "detail": None}
 
 

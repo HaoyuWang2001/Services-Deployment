@@ -35,6 +35,7 @@ class ClusterDefaults(BaseModel):
     port: int = Field(default=22, ge=1, le=65535)
     private_key: str = "~/.ssh/id_rsa"
     connect_timeout: float = Field(default=10.0, gt=0, le=120)
+    sudo: bool = False  # SSH 用户具备免密 sudo，特权操作（端口监控）经 sudo -n 执行
 
 
 class NodeSpec(BaseModel):
@@ -45,6 +46,7 @@ class NodeSpec(BaseModel):
     port: Optional[int] = Field(default=None, ge=1, le=65535)
     private_key: Optional[str] = None
     connect_timeout: Optional[float] = Field(default=None, gt=0, le=120)
+    sudo: Optional[bool] = None
 
     @field_validator("name")
     @classmethod
@@ -62,6 +64,7 @@ class Node(BaseModel):
     port: int
     private_key: str
     connect_timeout: float
+    sudo: bool = False
 
 
 class ClusterConfig(BaseModel):
@@ -79,6 +82,7 @@ class ClusterConfig(BaseModel):
                 port=n.port if n.port is not None else d.port,
                 private_key=n.private_key or d.private_key,
                 connect_timeout=n.connect_timeout or d.connect_timeout,
+                sudo=n.sudo if n.sudo is not None else d.sudo,
             )
             for n in self.nodes
         ]
