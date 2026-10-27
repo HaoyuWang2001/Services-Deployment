@@ -89,7 +89,6 @@ const nodes = ref([])
 const tabs = reactive([])
 const activeTabId = ref('')
 let tabSeq = 0
-let lastQueryKey = ''
 
 const PALETTE = ['#67c23a', '#e6a23c', '#409eff', '#f56c6c', '#b37feb', '#36cfc9', '#ffd666', '#ff9c6e']
 const colorMap = reactive({})
@@ -360,9 +359,7 @@ function handleQuery() {
   if (!q.service) return
   const nodesArr = String(q.node || '').split(',').filter((n) => n && nodes.value.includes(n))
   const runId = q.run_id ? String(q.run_id) : 'latest'
-  const key = `${q.service}|${[...nodesArr].sort().join(',')}|${runId}`
-  if (key === lastQueryKey) return
-  lastQueryKey = key
+  // 幂等：已存在同会话标签 → 聚焦（必要时连接）；不存在（含刚被关闭）→ 新建
   const existing = tabs.find((t) =>
     t.service === q.service && t.runId === runId &&
     [...t.nodeSel].sort().join(',') === [...nodesArr].sort().join(','))

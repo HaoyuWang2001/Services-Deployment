@@ -36,7 +36,7 @@
               <el-table-column label="日志" min-width="240">
                 <template #default="{ row: s }">
                   <el-link v-if="s.run_id" type="primary" :underline="false"
-                           @click="$router.push({ path: '/logs', query: { service: row.service, node: s.node, run_id: s.run_id, connect: '1' } })">
+                           @click="$router.push({ path: '/logs', query: { service: row.service, node: s.node, run_id: s.run_id, connect: '1', _t: String(Date.now()) } })">
                     {{ s.log_path }}
                   </el-link>
                   <span v-else>-</span>

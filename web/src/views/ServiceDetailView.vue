@@ -106,13 +106,9 @@
         </el-table-column>
         <el-table-column prop="started_at" label="最近启动" width="180" />
         <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="230">
+        <el-table-column label="操作" width="80">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
-            <el-button size="small" link type="success" :disabled="dirty || row.status === 'running'" @click="oneInstanceOp('start', row)">启动</el-button>
-            <el-button size="small" link type="warning" :disabled="dirty" @click="oneInstanceOp('restart', row)">重启</el-button>
-            <el-button size="small" link type="danger" :disabled="dirty || row.status !== 'running'" @click="oneInstanceOp('stop', row)">停止</el-button>
-            <el-button size="small" link type="danger" :disabled="dirty" @click="oneInstanceOp('delete', row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -407,12 +403,8 @@ async function batchInstanceOp(action) {
   if (await confirmInstOp(action, nodeList)) submitInstOp(action, nodeList)
 }
 
-async function oneInstanceOp(action, row) {
-  if (await confirmInstOp(action, [row.node])) submitInstOp(action, [row.node])
-}
-
 function viewLog(row) {
-  useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1' } })
+  useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
 }
 
 // ---------------------------------------------------------------- 初始化

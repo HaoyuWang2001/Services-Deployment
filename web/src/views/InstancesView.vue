@@ -41,13 +41,9 @@
       <el-table-column prop="run_id" label="run_id" width="165" />
       <el-table-column prop="started_at" label="最近启动" width="175" />
       <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
-      <el-table-column label="操作" width="240">
+      <el-table-column label="操作" width="80">
         <template #default="{ row }">
           <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
-          <el-button size="small" link type="success" :disabled="row.status === 'running'" @click="one('start', row)">启动</el-button>
-          <el-button size="small" link type="warning" @click="one('restart', row)">重启</el-button>
-          <el-button size="small" link type="danger" :disabled="row.status !== 'running'" @click="one('stop', row)">停止</el-button>
-          <el-button size="small" link type="danger" @click="one('delete', row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -89,7 +85,7 @@ function setTimer() {
 const ACTION_TEXT = { start: '启动', restart: '重启', stop: '停止', delete: '删除' }
 
 function viewLog(row) {
-  router.push({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1' } })
+  router.push({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
 }
 
 async function submitGroups(action, rows) {
@@ -123,10 +119,6 @@ async function confirmAction(action, targets) {
       `${ACTION_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
   } catch { return false }
   return true
-}
-
-async function one(action, row) {
-  if (await confirmAction(action, [row])) submitGroups(action, [row])
 }
 
 async function batch(action) {
