@@ -34,6 +34,12 @@ _TICK_CMD = "sed 's/.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}'"
 
 
 def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str, str]) -> str:
+    """启动命令：续写模式——同一实例多次启动共用日志文件，追加前写入分隔符行。
+
+    - 重定向使用 >>（续写），启动前写 "===== [时间] 实例启动 =====" 分隔符
+    - 退出码双写：exit_code（最近一次）+ exit_codes.log（历史，时间+码）
+    - 组杀（停止）时 wrapper 一并被杀、不写码 → 无退出码 = 未正常结束
+    """
     ws = shell_ws(service.workspace)
     script = shlex.quote(service.start.script)
     args = " ".join(shlex.quote(a) for a in service.start.args)
@@ -43,19 +49,28 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     logdir = f"logs/{run_id}"
     logfile = f"{logdir}/{service.start.log}"
     pidfile = f"run/{service.name}.pid"
-    # wrapper 捕获脚本退出码写入 logs/<run_id>/exit_code 后以同码退出；
-    # 组杀（停止）时 wrapper 一并被杀、不写文件 → 无退出码 = 未正常结束。
     inner = (f"bash {script}"
              + (f" {args}" if args else "")
-             + f"; rc=$?; echo $rc > {shlex.quote(f'{logdir}/exit_code')}; exit $rc")
+             + f"; rc=$?; echo $rc > {shlex.quote(f'{logdir}/exit_code')}; "
+             + f"echo \"[$(date '+%F %T')] $rc\" >> {shlex.quote(f'{logdir}/exit_codes.log')}; exit $rc")
+    separator = (f"echo \"===== [$(date '+%F %T')] 实例启动 =====\" "
+                 f">> {shlex.quote(logfile)}; ")
     return (
         f"cd {ws} && mkdir -p {shlex.quote(logdir)} run && "
+        f"{separator}"
         # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除。
         f"{{ setsid nohup {env}bash -c {shlex.quote(inner)} "
-        f"> {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
+        f">> {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
         f"tick=$({_TICK_CMD}); "
         f"echo \"$pid $tick\" > {pidfile}; echo PID=$pid; }}"
     )
+
+
+def build_create_dirs_command(service: ServiceConfig, run_id: str) -> str:
+    """创建实例（不启动）时仅建立日志目录与 run 目录（workspace 一并创建）。"""
+    ws = shell_ws(service.workspace)
+    logdir = shlex.quote(f"logs/{run_id}")
+    return f"mkdir -p {ws}/{logdir} {ws}/run"
 
 
 def build_kill_stop_command(service: ServiceConfig) -> str:
@@ -256,7 +271,7 @@ async def list_ports(pool: SSHPool, node: Node) -> list[dict]:
 # --------------------------------------------------------------- 执行器 ----
 async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
                         run_id: str, variables: dict[str, str]) -> dict:
-    """启动服务：部署文件 + nohup 后台运行。返回 {pid, log_path, uploaded}。"""
+    """启动服务：部署文件 + 分隔符 + nohup 续写运行。返回 {pid, log_path, uploaded}。"""
     from .deployer import deploy_service  # 延迟导入避免循环
 
     uploaded = await deploy_service(pool, node, service)
@@ -268,6 +283,13 @@ async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
     if pid is None:
         raise ExecError(f"未能获取 PID，输出异常: {res.stdout.strip()[:300]}")
     return {"pid": pid, "log_path": service.log_path(run_id), "uploaded": uploaded}
+
+
+async def create_dirs(pool: SSHPool, node: Node, service: ServiceConfig, run_id: str) -> None:
+    """创建实例（不启动）时建立日志目录。"""
+    res = await pool.run(node, build_create_dirs_command(service, run_id), timeout=15)
+    if not res.ok:
+        raise ExecError(f"创建日志目录失败: {(res.stderr or '').strip()[:300]}")
 
 
 async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig) -> str:

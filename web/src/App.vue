@@ -5,8 +5,9 @@
       <el-menu router :default-active="menuActive" class="menu">
         <el-menu-item index="/cluster">集群节点</el-menu-item>
         <el-menu-item index="/services">服务管理</el-menu-item>
+        <el-menu-item index="/instances">运行实例</el-menu-item>
         <el-menu-item index="/logs">日志查看</el-menu-item>
-        <el-menu-item index="/monitor">监控</el-menu-item>
+        <el-menu-item index="/monitor">监控指令</el-menu-item>
         <el-menu-item index="/tasks">任务历史</el-menu-item>
       </el-menu>
       <div class="aside-footer">

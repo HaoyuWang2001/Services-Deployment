@@ -36,11 +36,14 @@ def test_start_command_structure():
     assert "mkdir -p logs/20261025-120000 run" in cmd
     # setsid 独立进程组 + 指纹写入 pid 文件
     assert "setsid nohup env MASTER_PORT=2379 bash -c " in cmd
-    # wrapper 捕获退出码
-    assert "echo $rc >" in cmd
-    assert "logs/20261025-120000/exit_code" in cmd
+    # 续写模式：分隔符行 + >> 追加重定向
+    assert "实例启动 =====" in cmd
+    assert '>> logs/20261025-120000/master.log;' in cmd
+    assert ">> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
+    # 退出码双写：最近一次 + 历史
+    assert "> logs/20261025-120000/exit_code;" in cmd
+    assert ">> logs/20261025-120000/exit_codes.log;" in cmd
     assert "exit $rc" in cmd
-    assert "> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
     assert 'echo "$pid $tick" > run/mooncake-master.pid' in cmd
     # 带空格的参数仍被安全引用（嵌套于 bash -c 内层）
     assert "237 9" in cmd

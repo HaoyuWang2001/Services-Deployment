@@ -42,6 +42,7 @@ class Task(BaseModel):
     action: str
     nodes: list[str]
     variables: dict[str, str] = Field(default_factory=dict)
+    auto_start: bool = True  # create 动作：创建后是否立即启动
     status: str = "running"  # running | completed | partial | failed
     run_id: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
@@ -147,7 +148,8 @@ class TaskManager:
         return service, resolved_nodes, merged
 
     async def create(self, service_name: str, action: str, nodes: list[str],
-                     variables: dict[str, str] | None = None) -> Task:
+                     variables: dict[str, str] | None = None,
+                     auto_start: bool = True) -> Task:
         service, resolved_nodes, merged_vars = self.validate(
             service_name, action, nodes, variables or {})
         task = Task(
@@ -155,8 +157,9 @@ class TaskManager:
             service=service_name,
             action=action,
             nodes=list(nodes),
-            variables={} if action == "stop" else merged_vars,
-            run_id=self.new_run_id() if action in ("start", "restart") else None,
+            variables={} if action in ("stop", "delete") else merged_vars,
+            auto_start=auto_start,
+            run_id=self.new_run_id() if action == "create" else None,
             subtasks=[SubTask(node=n.name) for n in resolved_nodes],
         )
         self._tasks.insert(0, task)
@@ -204,49 +207,65 @@ class TaskManager:
                 sub.uploaded = n
                 sub.detail = f"已下发 {n} 个文件 → {service.workspace}"
 
-            elif task.action == "start":
-                # 重复启动保护（默认开启）：部署前确认该节点无运行中实例；
-                # 加锁避免并发任务同时通过检查。
+            elif task.action == "create":
                 async with self._start_lock(service.name, node_name):
-                    if not service.allow_duplicate_start:
-                        st = await executor.service_status(self.pool, node, service)
-                        if st.state == "running":
-                            raise executor.ExecError(
-                                f"节点 {node_name} 已有运行中实例(PID {st.pid})，禁止重复启动；"
-                                "请先停止该实例或使用「重启」")
-                        if st.state == "legacy":
-                            raise executor.ExecError(
-                                f"节点 {node_name} 存在旧格式运行实例(PID {st.pid})，"
-                                "请按提示手动处理后再启动")
-                    info = await executor.start_service(
-                        self.pool, node, service, task.run_id, task.variables)
-                sub.pid = info["pid"]
-                sub.run_id = task.run_id
-                sub.log_path = info["log_path"]
-                sub.uploaded = info["uploaded"]
-                sub.detail = f"pid={info['pid']}，日志 {info['log_path']}"
-                self.instances.register(service.name, node_name, info["pid"],
-                                        task.run_id, info["log_path"])
+                    existing = self.instances.get(service.name, node_name)
+                    if existing is not None:
+                        raise executor.ExecError(
+                            f"节点 {node_name} 已存在服务 {service.name} 的实例"
+                            f"（run_id {existing.run_id}），请在实例列表中操作")
+                    st = await executor.service_status(self.pool, node, service)
+                    if st.state in ("running", "legacy"):
+                        raise executor.ExecError(
+                            f"节点 {node_name} 上存在运行中的进程但无实例记录"
+                            f"（状态 {st.state}，PID {st.pid}），请先停止或删除后再创建")
+                    self.instances.create(service.name, node_name, task.run_id,
+                                          service.log_path(task.run_id))
+                    await executor.create_dirs(self.pool, node, service, task.run_id)
+                    sub.run_id = task.run_id
+                    sub.log_path = service.log_path(task.run_id)
+                    sub.detail = f"实例已创建（run_id {task.run_id}）"
+                    if task.auto_start:
+                        await self._launch(task, service, node, node_name, sub, task.run_id)
 
-            elif task.action == "stop":
-                out = await executor.stop_service(self.pool, node, service)
-                sub.detail = out
-                self.instances.unregister(service.name, node_name)
+            elif task.action == "start":
+                async with self._start_lock(service.name, node_name):
+                    run_id = self._ensure_instance(task, service, node_name)
+                    await self._check_duplicate(service, node, node_name)
+                    await self._launch(task, service, node, node_name, sub, run_id)
 
             elif task.action == "restart":
-                # 停止阶段失败（LEGACY/PIDREUSED/STOPFAIL 等）直接中止：
-                # 旧进程未死就启动新实例会导致端口冲突或双实例。
-                await executor.stop_service(self.pool, node, service)
-                self.instances.unregister(service.name, node_name)
-                info = await executor.start_service(
-                    self.pool, node, service, task.run_id, task.variables)
-                sub.pid = info["pid"]
-                sub.run_id = task.run_id
-                sub.log_path = info["log_path"]
-                sub.uploaded = info["uploaded"]
-                sub.detail = f"pid={info['pid']}，日志 {info['log_path']}"
-                self.instances.register(service.name, node_name, info["pid"],
-                                        task.run_id, info["log_path"])
+                async with self._start_lock(service.name, node_name):
+                    run_id = self._ensure_instance(task, service, node_name)
+                    # 停止阶段失败（LEGACY/PIDREUSED/STOPFAIL）直接中止，避免双实例
+                    await executor.stop_service(self.pool, node, service)
+                    await self._launch(task, service, node, node_name, sub, run_id)
+
+            elif task.action == "stop":
+                # 停止：终止进程但保留实例记录（可再次启动）
+                out = await executor.stop_service(self.pool, node, service)
+                sub.detail = out
+                inst = self.instances.get(service.name, node_name)
+                if inst is not None:
+                    sub.run_id = inst.run_id
+                    sub.log_path = inst.log_path
+
+            elif task.action == "delete":
+                inst = self.instances.get(service.name, node_name)
+                if inst is None:
+                    sub.detail = "实例不存在（幂等成功）"
+                else:
+                    sub.run_id = inst.run_id
+                    sub.log_path = inst.log_path
+                    try:
+                        out = await executor.stop_service(self.pool, node, service)
+                        sub.detail = out
+                    except executor.ExecError as e:
+                        if "PIDREUSED" not in str(e):
+                            raise  # STOPFAIL / LEGACY：无法安全停止，中止删除
+                        sub.detail = f"PID 已被复用，视为无本方进程: {e}"
+                    self.instances.unregister(service.name, node_name)
+                    sub.detail = (sub.detail or "") + "；实例已删除"
 
             sub.status = "success"
         except Exception as e:  # noqa: BLE001
@@ -256,3 +275,40 @@ class TaskManager:
         finally:
             sub.finished_at = time.time()
             self._persist()
+
+    # ------------------------------------------------------ 生命周期辅助 ----
+    async def _launch(self, task: Task, service: ServiceConfig, node: Node,
+                      node_name: str, sub: SubTask, run_id: str) -> None:
+        """部署 + 分隔符 + 续写启动，并更新实例记录。"""
+        info = await executor.start_service(self.pool, node, service, run_id, task.variables)
+        sub.pid = info["pid"]
+        sub.run_id = run_id
+        sub.log_path = info["log_path"]
+        sub.uploaded = info["uploaded"]
+        sub.detail = f"pid={info['pid']}，日志 {info['log_path']}"
+        self.instances.update_start(service.name, node_name, info["pid"], info["log_path"])
+        if task.run_id is None:
+            task.run_id = run_id
+
+    def _ensure_instance(self, task: Task, service: ServiceConfig, node_name: str) -> str:
+        """返回实例 run_id；实例不存在时自动创建（API 兼容：直接 start）。"""
+        inst = self.instances.get(service.name, node_name)
+        if inst is not None:
+            return inst.run_id
+        run_id = task.run_id or self.new_run_id()
+        self.instances.create(service.name, node_name, run_id, service.log_path(run_id))
+        return run_id
+
+    async def _check_duplicate(self, service: ServiceConfig, node: Node, node_name: str) -> None:
+        """重复启动保护（默认开启）：已有运行实例时拒绝启动。"""
+        if service.allow_duplicate_start:
+            return
+        st = await executor.service_status(self.pool, node, service)
+        if st.state == "running":
+            raise executor.ExecError(
+                f"节点 {node_name} 已有运行中实例(PID {st.pid})，禁止重复启动；"
+                "请先停止该实例或使用「重启」")
+        if st.state == "legacy":
+            raise executor.ExecError(
+                f"节点 {node_name} 存在旧格式运行实例(PID {st.pid})，"
+                "请按提示手动处理后再启动")

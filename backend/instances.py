@@ -27,7 +27,8 @@ class Instance(BaseModel):
     pid: Optional[int] = None
     run_id: str
     log_path: str
-    started_at: str = Field(default_factory=_now_iso)
+    created_at: str = Field(default_factory=_now_iso)
+    started_at: str = Field(default_factory=_now_iso)  # 最近一次启动时间
 
 
 class InstanceRegistry:
@@ -57,9 +58,21 @@ class InstanceRegistry:
         )
         tmp.replace(self._file)
 
-    def register(self, service: str, node: str, pid: Optional[int], run_id: str, log_path: str) -> None:
-        self._items[(service, node)] = Instance(
-            service=service, node=node, pid=pid, run_id=run_id, log_path=log_path)
+    def create(self, service: str, node: str, run_id: str, log_path: str) -> Instance:
+        """创建实例记录（停止后保留，删除才移除）。"""
+        inst = Instance(service=service, node=node, pid=None, run_id=run_id, log_path=log_path)
+        self._items[(service, node)] = inst
+        self._save()
+        return inst
+
+    def update_start(self, service: str, node: str, pid: Optional[int], log_path: str) -> None:
+        """实例启动后更新 PID / 最近启动时间 / 日志路径（run_id 不变）。"""
+        inst = self._items.get((service, node))
+        if inst is None:
+            return
+        inst.pid = pid
+        inst.log_path = log_path
+        inst.started_at = _now_iso()
         self._save()
 
     def unregister(self, service: str, node: str) -> None:

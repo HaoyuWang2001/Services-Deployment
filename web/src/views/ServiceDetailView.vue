@@ -53,10 +53,11 @@
       </div>
       <div class="actions">
         <el-button size="small" :disabled="blockReasons.length > 0" @click="submit('deploy')">仅部署文件</el-button>
+        <el-checkbox v-model="autoStart" class="auto-start">立即启动</el-checkbox>
         <el-button class="start-btn" size="small" type="primary"
-                   :disabled="blockReasons.length > 0" @click="submit('start')">启动实例</el-button>
+                   :disabled="blockReasons.length > 0" @click="submit('create')">创建实例</el-button>
         <span v-if="blockReasons.length" class="dirty-hint">{{ blockReasons.join('；') }}</span>
-        <span v-else class="hint-secondary">重启 / 停止请在下方实例列表中按实例操作</span>
+        <span v-else class="hint-secondary">创建后：启动 / 重启 / 停止 / 删除均在实例层级操作</span>
       </div>
     </el-card>
 
@@ -71,6 +72,10 @@
             </el-tooltip>
           </div>
           <div class="inst-actions">
+            <el-button size="small" type="success" plain
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('start')">
+              启动选中 ({{ selectedInsts.length }})
+            </el-button>
             <el-button size="small" type="warning" plain
                        :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('restart')">
               重启选中 ({{ selectedInsts.length }})
@@ -78,6 +83,10 @@
             <el-button size="small" type="danger" plain
                        :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
+            </el-button>
+            <el-button size="small" type="danger"
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('delete')">
+              删除选中 ({{ selectedInsts.length }})
             </el-button>
             <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
           </div>
@@ -95,11 +104,15 @@
             <el-tag :type="statusType(row)" size="small">{{ statusText(row) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="started_at" label="启动时间" width="180" />
-        <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
-        <el-table-column label="操作" width="100">
+        <el-table-column prop="started_at" label="最近启动" width="180" />
+        <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
+        <el-table-column label="操作" width="230">
           <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="viewLog(row)">查看日志</el-button>
+            <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
+            <el-button size="small" link type="success" :disabled="dirty || row.status === 'running'" @click="oneInstanceOp('start', row)">启动</el-button>
+            <el-button size="small" link type="warning" :disabled="dirty" @click="oneInstanceOp('restart', row)">重启</el-button>
+            <el-button size="small" link type="danger" :disabled="dirty || row.status !== 'running'" @click="oneInstanceOp('stop', row)">停止</el-button>
+            <el-button size="small" link type="danger" :disabled="dirty" @click="oneInstanceOp('delete', row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -169,6 +182,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { statusType, statusText } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
 
@@ -309,16 +323,19 @@ const blockReasons = computed(() => {
   return reasons
 })
 
+const autoStart = ref(true)
+
 async function submit(action) {
   if (!selectedNodes.value.length) {
     ElMessage.warning('请先勾选目标节点')
     return
   }
-  if (action === 'start') {
+  if (action === 'create') {
+    const extra = autoStart.value ? '并立即启动' : '（仅创建，稍后在实例列表启动）'
     try {
       await ElMessageBox.confirm(
-        `确定在 ${selectedNodes.value.join('、')} 上启动服务 ${name.value}？`,
-        '启动实例确认', { type: 'info' })
+        `确定在 ${selectedNodes.value.join('、')} 上创建服务 ${name.value} 的实例${extra}？`,
+        '创建实例确认', { type: 'info' })
     } catch { return }
   }
   const variables = {}
@@ -326,7 +343,9 @@ async function submit(action) {
     if (v !== '') variables[k] = v
   }
   try {
-    const task = await api.createTask({ service: name.value, action, nodes: selectedNodes.value, variables })
+    const payload = { service: name.value, action, nodes: selectedNodes.value, variables }
+    if (action === 'create') payload.auto_start = autoStart.value
+    const task = await api.createTask(payload)
     ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
     setTimeout(() => loadInstances(true), 1000)
     setTimeout(() => loadInstances(true), 4000)
@@ -357,47 +376,43 @@ function setTimer() {
   if (autoRefresh.value) timer = setInterval(() => loadInstances(true), 10000)
 }
 
-async function batchInstanceOp(action) {
-  const nodeList = selectedInsts.value.map((r) => r.node)
-  if (!nodeList.length) return
-  const text = action === 'restart' ? '重启' : '停止'
+const INST_OP_TEXT = { start: '启动', restart: '重启', stop: '停止', delete: '删除' }
+
+async function confirmInstOp(action, nodeList) {
+  const extra = { delete: '（停止进程并从列表移除，节点文件保留）',
+                  restart: '（停止后启动，日志续写并加分隔符）',
+                  stop: '（终止进程，实例保留可再启动）' }[action] || ''
   try {
     await ElMessageBox.confirm(
-      `确定${text} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）？`
-      + (action === 'restart' ? '重启将生成新的日志批次。' : ''),
-      `${text}确认`, { type: 'warning' })
-  } catch { return }
+      `确定${INST_OP_TEXT[action]} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）${extra}？`,
+      `${INST_OP_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
+  } catch { return false }
+  return true
+}
+
+async function submitInstOp(action, nodeList) {
   try {
     const task = await api.createTask({ service: name.value, action, nodes: nodeList })
-    ElMessage.success(
-      action === 'restart' ? `重启任务已提交（run_id ${task.run_id}）` : `停止任务已提交（${task.id}）`)
+    ElMessage.success(`${INST_OP_TEXT[action]}任务已提交（${task.id}）`)
     setTimeout(() => loadInstances(true), 800)
+    setTimeout(() => loadInstances(true), 3000)
   } catch (e) {
     ElMessage.error(`创建任务失败: ${e.message}`)
   }
 }
 
-function viewLog(row) {
-  useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1' } })
+async function batchInstanceOp(action) {
+  const nodeList = selectedInsts.value.map((r) => r.node)
+  if (!nodeList.length) return
+  if (await confirmInstOp(action, nodeList)) submitInstOp(action, nodeList)
 }
 
-function statusType(row) {
-  if (row.status === 'dead') {
-    if (row.exit_code === 0) return 'success'
-    if (row.exit_code != null) return 'danger'
-    return 'warning'  // 无退出码 = 被终止/异常结束
-  }
-  return { running: 'success', legacy: 'warning', reused: 'danger',
-           nopidfile: 'info', nows: 'warning', unknown: 'info' }[row.status] || 'info'
+async function oneInstanceOp(action, row) {
+  if (await confirmInstOp(action, [row.node])) submitInstOp(action, [row.node])
 }
-function statusText(row) {
-  if (row.status === 'dead') {
-    if (row.exit_code === 0) return '已退出(0)'
-    if (row.exit_code != null) return `已退出(码=${row.exit_code})`
-    return '已退出(无码)'
-  }
-  return { running: '运行中', legacy: '旧实例(需手动处理)', reused: 'PID复用',
-           nopidfile: '无PID文件', nows: '未部署', unknown: '未知' }[row.status] || row.status
+
+function viewLog(row) {
+  useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1' } })
 }
 
 // ---------------------------------------------------------------- 初始化
@@ -440,6 +455,7 @@ onDeactivated(() => clearInterval(timer))
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
+.actions .auto-start { margin-left: 20px; margin-right: 4px; }
 .node-select .select-all-btn { margin-left: 24px; }
 .dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .dialog-footer .dirty-hint { margin-right: auto; }
