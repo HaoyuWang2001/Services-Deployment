@@ -6,6 +6,7 @@
         <el-menu-item index="/cluster">集群节点</el-menu-item>
         <el-menu-item index="/services">服务管理</el-menu-item>
         <el-menu-item index="/logs">日志查看</el-menu-item>
+        <el-menu-item index="/monitor">监控</el-menu-item>
         <el-menu-item index="/tasks">任务历史</el-menu-item>
       </el-menu>
       <div class="aside-footer">

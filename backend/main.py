@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from .config import DATA_DIR, ConfigStore
 from .context import ctx
 from .instances import InstanceRegistry
-from .routers import cluster, instances, logs, services, tasks
+from .monitors import MonitorStore
+from .routers import cluster, instances, logs, monitors, services, tasks
 from .ssh import SSHPool
 from .tasks import TaskManager
 
@@ -47,14 +48,17 @@ async def lifespan(app: FastAPI):
     pool = SSHPool()
     registry = InstanceRegistry(DATA_DIR)
     task_manager = TaskManager(pool, store, registry, DATA_DIR)
+    monitors = MonitorStore(DATA_DIR)
     app.state.store = store
     app.state.pool = pool
     app.state.instances = registry
     app.state.task_manager = task_manager
+    app.state.monitors = monitors
     ctx.store = store
     ctx.pool = pool
     ctx.instances = registry
     ctx.task_manager = task_manager
+    ctx.monitors = monitors
     yield
     await pool.close_all()
 
@@ -78,6 +82,7 @@ app.include_router(services.router)
 app.include_router(tasks.router)
 app.include_router(instances.router)
 app.include_router(logs.router)
+app.include_router(monitors.router)
 
 
 @app.get("/api/health")

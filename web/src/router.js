@@ -6,6 +6,7 @@ const routes = [
   { path: '/services', component: () => import('./views/ServicesView.vue') },
   { path: '/services/:name', component: () => import('./views/ServiceDetailView.vue') },
   { path: '/logs', component: () => import('./views/LogsView.vue') },
+  { path: '/monitor', component: () => import('./views/MonitorView.vue') },
   { path: '/tasks', component: () => import('./views/TasksView.vue') },
 ]
 

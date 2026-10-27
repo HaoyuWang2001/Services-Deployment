@@ -9,6 +9,7 @@ async function request(method, url, body) {
     try { detail = (await res.json()).detail } catch { /* ignore */ }
     throw new Error(detail || `HTTP ${res.status}`)
   }
+  if (res.status === 204) return null
   return res.json()
 }
 
@@ -17,6 +18,10 @@ export const api = {
   testNode: (name) => request('POST', `/api/cluster/nodes/${encodeURIComponent(name)}/test`),
   nodePorts: (name) => request('GET', `/api/cluster/nodes/${encodeURIComponent(name)}/ports`),
   reloadConfig: () => request('POST', '/api/cluster/reload'),
+  monitors: () => request('GET', '/api/monitors'),
+  createMonitor: (payload) => request('POST', '/api/monitors', payload),
+  updateMonitor: (id, payload) => request('PUT', `/api/monitors/${id}`, payload),
+  deleteMonitor: (id) => request('DELETE', `/api/monitors/${id}`),
   services: () => request('GET', '/api/services'),
   service: (name) => request('GET', `/api/services/${encodeURIComponent(name)}`),
   createService: (name) => request('POST', '/api/services', { name }),

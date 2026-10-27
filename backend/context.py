@@ -5,6 +5,7 @@ from typing import Optional
 
 from .config import ConfigStore
 from .instances import InstanceRegistry
+from .monitors import MonitorStore
 from .ssh import SSHPool
 from .tasks import TaskManager
 
@@ -14,6 +15,7 @@ class AppContext:
     pool: Optional[SSHPool] = None
     instances: Optional[InstanceRegistry] = None
     task_manager: Optional[TaskManager] = None
+    monitors: Optional[MonitorStore] = None
 
 
 ctx = AppContext()

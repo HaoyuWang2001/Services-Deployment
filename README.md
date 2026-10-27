@@ -119,6 +119,7 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8310
 | 集群节点 | 节点列表、SSH 连通性测试（结果保留）、每节点端口监控（抽屉：监听端口/占用进程/过滤）、端口查询（多节点占用对照）、配置热重载 |
 | 服务管理 | 列表（新建=克隆 example 模板、全量刷新）→ 每个服务子页面：配置编辑（含目标节点白名单，保存写回 service.json，编辑中禁止操作）、启动实例（仅白名单节点可选）、运行实例表（探活/重启/停止/查看日志） |
 | 日志查看 | 多标签实时日志：每个标签独立会话（服务+节点+批次），WebSocket `tail -F`、下载快照；标签内搜索（高亮/上下跳转/首尾/仅显示匹配行）、意外断开自动重连（3s 退避，可关）；从服务页/任务页跳转自动连接 |
+| 监控 | watch 式指标监视：输入命令（可保存为命名监控项，所有浏览器共享）+ 间隔 + 多节点，输出整屏替换刷新并保留最近 500 帧历史，可逐帧回看（「前面有数据突然没了」时可向上翻查） |
 | 任务历史 | 任务列表展开查看每个节点的结果（PID / run_id / 错误 / 耗时），展开时懒加载详情 |
 
 页面切换保留状态（测试结果、日志流缓冲等）；编辑服务配置保存前禁止启动/停止/重启操作。
@@ -174,6 +175,14 @@ curl -s "$BASE/api/logs/services/etcd/nodes/node4/archives"
 
 # 实时日志流（WebSocket，多节点逗号分隔合并视图）
 websocat "$BASE/api/logs/ws/logs?service=etcd&nodes=node4&run_id=latest&tail=100"
+
+# 监控：周期执行命令（watch 语义）；命名监控项 CRUD
+curl -s $BASE/api/monitors
+curl -s -X POST $BASE/api/monitors -H 'Content-Type: application/json' \
+  -d '{"name":"磁盘使用率","cmd":"df -h","interval":5}'
+websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h"
+# 帧格式: {"type":"output","node":"node1","stdout":"...","stderr":"","exit_code":0,"ts":...}
+# 说明: 命令以 sudo 开头自动改写为 sudo -n；单次执行超时为 max(间隔,5s)（上限 30s）
 ```
 
 任务动作：`deploy`（仅下发文件）、`start`（下发 + 启动，生成实例）、`stop`、`restart`（实例级操作）。

@@ -4,6 +4,7 @@ from __future__ import annotations
 from .config import ConfigStore
 from .context import ctx
 from .instances import InstanceRegistry
+from .monitors import MonitorStore
 from .ssh import SSHPool
 from .tasks import TaskManager
 
@@ -26,3 +27,8 @@ def get_instances() -> InstanceRegistry:
 def get_tasks() -> TaskManager:
     assert ctx.task_manager is not None
     return ctx.task_manager
+
+
+def get_monitors() -> MonitorStore:
+    assert ctx.monitors is not None
+    return ctx.monitors
