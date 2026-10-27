@@ -78,7 +78,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { api } from '../api'
@@ -117,7 +117,9 @@ function push(tab, kind, node, text) {
 function scrollTerm(tab) {
   nextTick(() => {
     const el = terms.get(tab.id)
-    if (el) el.scrollTop = el.scrollHeight
+    // 页面被 KeepAlive 隐藏时（display:none）scrollHeight 为 0，
+    // 写入 scrollTop 会把位置重置为顶部，必须跳过，等待 onActivated 再滚
+    if (el && el.clientHeight > 0) el.scrollTop = el.scrollHeight
   })
 }
 
@@ -373,6 +375,12 @@ function handleQuery() {
 
 watch(() => route.query, () => { if (route.path === '/logs') handleQuery() })
 watch(activeTabId, () => {
+  const tab = tabs.find((t) => String(t.id) === activeTabId.value)
+  if (tab && tab.autoscroll) scrollTerm(tab)
+})
+
+// 返回日志页：自动滚动开 → 跳到底部（含离开期间积压的新行）；关 → 保留原位置
+onActivated(() => {
   const tab = tabs.find((t) => String(t.id) === activeTabId.value)
   if (tab && tab.autoscroll) scrollTerm(tab)
 })
