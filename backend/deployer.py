@@ -18,6 +18,18 @@ class DeployError(RuntimeError):
     pass
 
 
+_PERM_MARKS = ("denied", "permission", "read-only", "failure")
+
+
+def perm_hint(err_text: str) -> str:
+    """错误文本含权限特征时返回修复提示。"""
+    low = (err_text or "").lower()
+    if any(m in low for m in _PERM_MARKS):
+        return ("；常见原因：workspace 目录属主与 SSH 登录用户不一致，"
+                "可在节点执行 chown -R <ssh用户> <workspace> 修复")
+    return ""
+
+
 def _is_hidden(rel: Path) -> bool:
     return any(part.startswith(".") for part in rel.parts)
 
@@ -94,9 +106,12 @@ async def deploy_service(pool: SSHPool, node: Node, service: ServiceConfig) -> i
             rel = local.relative_to(service.service_dir).as_posix()
             remote = posixpath.join(ws, rel)
             await _sftp_mkdirs(sftp, posixpath.dirname(remote))
-            await sftp.put(str(local), remote)
-            if (local.stat().st_mode & 0o111) or local.suffix == ".sh":
-                await sftp.chmod(remote, 0o755)
+            try:
+                await sftp.put(str(local), remote)
+                if (local.stat().st_mode & 0o111) or local.suffix == ".sh":
+                    await sftp.chmod(remote, 0o755)
+            except (asyncssh.SFTPError, OSError) as e:
+                raise DeployError(f"上传 {rel} 失败: {e}{perm_hint(str(e))}") from e
             count += 1
     finally:
         sftp.exit()

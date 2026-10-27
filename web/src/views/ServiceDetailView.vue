@@ -178,6 +178,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { trackTask } from '../taskNotify'
 import { statusType, statusText } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
@@ -342,6 +343,7 @@ async function submit(action) {
     const payload = { service: name.value, action, nodes: selectedNodes.value, variables }
     if (action === 'create') payload.auto_start = autoStart.value
     const task = await api.createTask(payload)
+    trackTask(task.id, `${action === 'create' ? '创建实例' : '部署文件'} ${name.value}`)
     ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
     setTimeout(() => loadInstances(true), 1000)
     setTimeout(() => loadInstances(true), 4000)
@@ -389,6 +391,7 @@ async function confirmInstOp(action, nodeList) {
 async function submitInstOp(action, nodeList) {
   try {
     const task = await api.createTask({ service: name.value, action, nodes: nodeList })
+    trackTask(task.id, `${INST_OP_TEXT[action]}实例 ${name.value}`)
     ElMessage.success(`${INST_OP_TEXT[action]}任务已提交（${task.id}）`)
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)

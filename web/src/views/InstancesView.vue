@@ -56,6 +56,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
+import { trackTask } from '../taskNotify'
 import { statusType, statusText } from '../instanceStatus'
 
 const router = useRouter()
@@ -98,7 +99,8 @@ async function submitGroups(action, rows) {
   let ok = 0
   for (const [service, nodes] of groups) {
     try {
-      await api.createTask({ service, action, nodes })
+      const task = await api.createTask({ service, action, nodes })
+      trackTask(task.id, `${ACTION_TEXT[action]}实例 ${service}`)
       ok += 1
     } catch (e) {
       ElMessage.error(`${service} ${ACTION_TEXT[action]}任务创建失败: ${e.message}`)

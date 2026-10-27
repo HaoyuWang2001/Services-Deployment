@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .config import Node, ServiceConfig
+from .deployer import deploy_service, perm_hint
 from .ssh import SSHPool, SSHError
 
 
@@ -272,13 +273,12 @@ async def list_ports(pool: SSHPool, node: Node) -> list[dict]:
 async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
                         run_id: str, variables: dict[str, str]) -> dict:
     """启动服务：部署文件 + 分隔符 + nohup 续写运行。返回 {pid, log_path, uploaded}。"""
-    from .deployer import deploy_service  # 延迟导入避免循环
-
     uploaded = await deploy_service(pool, node, service)
     cmd = build_start_command(service, run_id, variables)
     res = await pool.run(node, cmd, timeout=60)
     if not res.ok:
-        raise ExecError(f"启动命令失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")
+        out = (res.stderr or res.stdout).strip()
+        raise ExecError(f"启动命令失败(exit={res.exit_code}): {out[:500]}{perm_hint(out)}")
     pid = parse_pid(res.stdout)
     if pid is None:
         raise ExecError(f"未能获取 PID，输出异常: {res.stdout.strip()[:300]}")
@@ -289,7 +289,8 @@ async def create_dirs(pool: SSHPool, node: Node, service: ServiceConfig, run_id:
     """创建实例（不启动）时建立日志目录。"""
     res = await pool.run(node, build_create_dirs_command(service, run_id), timeout=15)
     if not res.ok:
-        raise ExecError(f"创建日志目录失败: {(res.stderr or '').strip()[:300]}")
+        err = (res.stderr or res.stdout or "").strip()
+        raise ExecError(f"创建日志目录失败: {err[:300]}{perm_hint(err)}")
 
 
 async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig) -> str:
