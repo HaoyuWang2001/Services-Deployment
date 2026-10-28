@@ -77,7 +77,7 @@
               启动选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="warning" plain
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('restart')">
+                       :disabled="!canRestart || dirty" @click="batchInstanceOp('restart')">
               重启选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger" plain
@@ -365,9 +365,17 @@ async function loadInstances(silent = false) {
   try {
     const data = await api.instances()
     instances.value = data.instances.filter((i) => i.service === name.value)
+    // 数据刷新后清理失效勾选（实例已被删除），保持勾选与数据一致
+    const stale = selectedInsts.value.some((s) =>
+      !instances.value.some((i) => i.node === s.node))
+    if (stale) instTable.value?.clearSelection()
   } catch { /* 静默：实例失败不打断页面 */ }
   finally { if (!silent) instLoading.value = false }
 }
+
+// 重启仅对「运行中」实例有意义：任一选中实例未运行则置灰
+const canRestart = computed(() =>
+  selectedInsts.value.length > 0 && selectedInsts.value.every((r) => r.status === 'running'))
 
 function setTimer() {
   clearInterval(timer)
@@ -393,6 +401,7 @@ async function submitInstOp(action, nodeList) {
     const task = await api.createTask({ service: name.value, action, nodes: nodeList })
     trackTask(task.id, `${INST_OP_TEXT[action]}实例 ${name.value}`)
     ElMessage.success(`${INST_OP_TEXT[action]}任务已提交（${task.id}）`)
+    instTable.value?.clearSelection()
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)
   } catch (e) {

@@ -12,7 +12,7 @@
           <el-button size="small" type="success" plain :disabled="!selected.length" @click="batch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!selected.length" @click="batch('restart')">
+          <el-button size="small" type="warning" plain :disabled="!canRestart" @click="batch('restart')">
             重启选中 ({{ selected.length }})
           </el-button>
           <el-button size="small" type="danger" plain :disabled="!selected.length" @click="batch('stop')">
@@ -26,7 +26,7 @@
       </div>
     </template>
 
-    <el-table :data="instances" v-loading="loading" size="small" row-key="key"
+    <el-table ref="instTable" :data="instances" v-loading="loading" size="small" row-key="key"
               :element-loading-text="undefined" @selection-change="(rows) => (selected = rows)"
               empty-text="暂无实例（在各服务页创建实例）">
       <el-table-column type="selection" reserve-selection width="45" />
@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
@@ -62,15 +62,23 @@ import { statusType, statusText } from '../instanceStatus'
 const router = useRouter()
 const instances = ref([])
 const selected = ref([])
+const instTable = ref(null)
 const loading = ref(false)
 const autoRefresh = ref(true)
 let timer = null
+
+// 重启仅对「运行中」实例有意义：任一选中实例未运行则置灰
+const canRestart = computed(() =>
+  selected.value.length > 0 && selected.value.every((r) => r.status === 'running'))
 
 async function load(silent = false) {
   if (!silent) loading.value = true
   try {
     const data = await api.instances()
     instances.value = data.instances.map((i) => ({ ...i, key: `${i.service}:${i.node}` }))
+    // 数据刷新后清理失效勾选（实例已被删除），保持勾选与数据一致
+    const stale = selected.value.some((s) => !instances.value.some((i) => i.key === s.key))
+    if (stale) instTable.value?.clearSelection()
   } catch (e) {
     if (!silent) ElMessage.error(`加载失败: ${e.message}`)
   } finally {
@@ -107,6 +115,7 @@ async function submitGroups(action, rows) {
     }
   }
   if (ok) ElMessage.success(`${ACTION_TEXT[action]}任务已提交（${ok} 个服务）`)
+  instTable.value?.clearSelection()
   setTimeout(() => load(true), 1000)
   setTimeout(() => load(true), 4000)
 }
