@@ -242,9 +242,10 @@ class TaskManager:
                     await self._launch(task, service, node, node_name, sub, run_id)
 
             elif task.action == "stop":
-                # 停止：终止进程但保留实例记录（可再次启动）
+                # 停止：终止进程但保留实例记录（可再次启动），并标记已停止
                 out = await executor.stop_service(self.pool, node, service)
                 sub.detail = out
+                self.instances.mark_stopped(service.name, node_name)
                 inst = self.instances.get(service.name, node_name)
                 if inst is not None:
                     sub.run_id = inst.run_id

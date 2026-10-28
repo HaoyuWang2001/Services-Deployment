@@ -54,11 +54,30 @@ def test_registry_lifecycle(tmp_path):
     assert got.run_id == "run-1"           # run_id 不变（续写同一日志）
     assert got.created_at == first_created  # 创建时间不变
     assert got.started_at                  # 最近启动时间存在
+    assert got.stopped is False
+
+    # 停止标记：置位 → 持久化 → 启动清除
+    reg.mark_stopped("svc", "n1")
+    assert reg.get("svc", "n1").stopped is True
+    reg2 = InstanceRegistry(tmp_path)
+    assert reg2.get("svc", "n1").stopped is True
+    reg.update_start("svc", "n1", 456, "/data/svc/logs/run-1/svc.log")
+    assert reg.get("svc", "n1").stopped is False
 
     # 停止后实例保留；跨进程持久化
-    reg2 = InstanceRegistry(tmp_path)
-    assert reg2.get("svc", "n1").pid == 123
+    reg3 = InstanceRegistry(tmp_path)
+    assert reg3.get("svc", "n1").pid == 456
 
     reg.unregister("svc", "n1")
     assert reg.get("svc", "n1") is None
     assert InstanceRegistry(tmp_path).get("svc", "n1") is None
+
+
+def test_create_dirs_command_cleans_stale_pidfile():
+    from backend.config import ServiceConfig
+    from backend.executor import build_create_dirs_command
+
+    svc = ServiceConfig(name="svc", workspace="/data/svc")
+    cmd = build_create_dirs_command(svc, "20261028-120000")
+    assert "mkdir -p /data/svc/logs/20261028-120000 /data/svc/run" in cmd
+    assert "rm -f /data/svc/run/svc.pid" in cmd

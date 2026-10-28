@@ -68,10 +68,15 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
 
 
 def build_create_dirs_command(service: ServiceConfig, run_id: str) -> str:
-    """创建实例（不启动）时仅建立日志目录与 run 目录（workspace 一并创建）。"""
+    """创建实例（不启动）时建立日志目录与 run 目录（workspace 一并创建）。
+
+    同时清理上一实例生命周期残留的 pid 文件（pid 文件按服务名命名、
+    不随实例删除而删除），确保新实例探活呈「未运行」而非「已退出」。
+    """
     ws = shell_ws(service.workspace)
     logdir = shlex.quote(f"logs/{run_id}")
-    return f"mkdir -p {ws}/{logdir} {ws}/run"
+    pidfile = shlex.quote(f"run/{service.name}.pid")
+    return f"mkdir -p {ws}/{logdir} {ws}/run && rm -f {ws}/{pidfile}"
 
 
 def build_kill_stop_command(service: ServiceConfig) -> str:

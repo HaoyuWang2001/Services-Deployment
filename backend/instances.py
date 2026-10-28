@@ -27,6 +27,7 @@ class Instance(BaseModel):
     pid: Optional[int] = None
     run_id: str
     log_path: str
+    stopped: bool = False  # 停止任务成功置位、启动清除：区分「已停止」与「异常退出」
     created_at: str = Field(default_factory=_now_iso)
     started_at: str = Field(default_factory=_now_iso)  # 最近一次启动时间
 
@@ -66,13 +67,22 @@ class InstanceRegistry:
         return inst
 
     def update_start(self, service: str, node: str, pid: Optional[int], log_path: str) -> None:
-        """实例启动后更新 PID / 最近启动时间 / 日志路径（run_id 不变）。"""
+        """实例启动后更新 PID / 最近启动时间 / 日志路径（run_id 不变，清除停止标记）。"""
         inst = self._items.get((service, node))
         if inst is None:
             return
         inst.pid = pid
         inst.log_path = log_path
         inst.started_at = _now_iso()
+        inst.stopped = False
+        self._save()
+
+    def mark_stopped(self, service: str, node: str) -> None:
+        """停止任务成功后置位停止标记（进程已终止但实例保留）。"""
+        inst = self._items.get((service, node))
+        if inst is None:
+            return
+        inst.stopped = True
         self._save()
 
     def unregister(self, service: str, node: str) -> None:
@@ -101,7 +111,10 @@ class InstanceRegistry:
                 d["note"] = f"配置缺失: {e}"
                 return d
             st = await executor.service_status(pool, node, svc, inst.run_id)
-            d["status"] = st.state  # running | dead | legacy | reused | nopidfile | nows | unknown
+            if st.state == "dead" and inst.stopped:
+                d["status"] = "stopped"  # 停止任务终止的实例：区别于异常退出
+            else:
+                d["status"] = st.state  # running | dead | legacy | reused | nopidfile | nows | unknown
             d["probe_pid"] = st.pid
             d["exit_code"] = st.exit_code
             return d
