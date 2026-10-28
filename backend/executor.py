@@ -219,11 +219,16 @@ PROC_RE = re.compile(r'\("([^"]+)",pid=(\d+),fd=\d+\)')
 def build_ports_command(sudo: bool = False) -> str:
     """列出监听端口及占用进程（-t tcp -u udp -l 监听 -n 数字 -p 进程 -H 无表头）。
 
+    同一条命令附加 `ps -eo pid=,user=` 段（无需特权）建立 pid→用户映射，
+    以 ===PS=== 标记分隔，一次 SSH 往返完成。
     sudo=True 时经 `sudo -n` 提权以获取全部进程归属（要求 sudoers 免密放行）；
     用 -n 确保未放行时立即失败而非挂起等待密码。
     """
     prefix = "sudo -n " if sudo else ""
-    return f"{prefix}ss -tulnpH"
+    return f"( {prefix}ss -tulnpH; echo ===PS===; ps -eo pid=,user= )"
+
+
+_PS_MARK = "===PS==="
 
 
 def _split_local(local: str) -> tuple[str, int | None]:
@@ -235,9 +240,19 @@ def _split_local(local: str) -> tuple[str, int | None]:
 
 
 def parse_ports(stdout: str) -> list[dict]:
-    """解析 ss -tulnpH 输出 → 按端口排序的结构化列表。"""
+    """解析命令输出 → 按端口排序的结构化列表，processes 附带 user（pid→用户映射）。"""
+    if _PS_MARK in stdout:
+        ss_part, _, ps_part = stdout.partition(_PS_MARK)
+    else:
+        ss_part, ps_part = stdout, ""
+    users: dict[int, str] = {}
+    for line in ps_part.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit():
+            users[int(parts[0])] = parts[1]
+
     entries: list[dict] = []
-    for line in stdout.splitlines():
+    for line in ss_part.splitlines():
         parts = line.split()
         if len(parts) < 5:
             continue
@@ -251,7 +266,8 @@ def parse_ports(stdout: str) -> list[dict]:
             "state": state,
             "local_addr": addr,
             "port": port,
-            "processes": [{"process": n, "pid": int(p)} for n, p in PROC_RE.findall(proc_part)],
+            "processes": [{"process": n, "pid": int(p), "user": users.get(int(p))}
+                          for n, p in PROC_RE.findall(proc_part)],
         })
     return sorted(entries, key=lambda e: (e["port"], e["proto"], e["local_addr"]))
 

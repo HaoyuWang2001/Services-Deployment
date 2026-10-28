@@ -55,7 +55,7 @@
     <!-- 节点端口抽屉 -->
     <el-drawer v-model="portsVisible" :title="`节点 ${portsNode} 监听端口`" size="62%">
       <div class="drawer-toolbar">
-        <el-input v-model="portsFilter" placeholder="按端口或进程名过滤" size="small" clearable style="width: 260px" />
+        <el-input v-model="portsFilter" placeholder="按端口/进程/用户过滤" size="small" clearable style="width: 260px" />
         <el-button size="small" @click="loadPorts(portsNode)" :loading="portsLoading">刷新</el-button>
         <el-alert v-if="portsWarning" :title="portsWarning" type="warning" show-icon :closable="false" style="flex: 1" />
       </div>
@@ -66,6 +66,12 @@
         <el-table-column prop="state" label="状态" width="90" />
         <el-table-column prop="local_addr" label="监听地址" min-width="140" />
         <el-table-column prop="port" label="端口" width="90" sortable />
+        <el-table-column label="用户" width="110">
+          <template #default="{ row }">
+            <span v-if="usersOf(row).length">{{ usersOf(row).join('、') }}</span>
+            <span v-else class="no-proc">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="进程" min-width="200">
           <template #default="{ row }">
             <span v-if="row.processes.length">
@@ -105,7 +111,7 @@
           <template #default="{ row }">
             <span v-if="row.ok && row.matches.length">
               <span v-for="(m, i) in row.matches" :key="i" class="proc">
-                {{ m.proto }} {{ m.local_addr }}:{{ m.port }} → {{ m.processes.map(p => `${p.process}(#${p.pid})`).join('、') || '未知进程' }}{{ i < row.matches.length - 1 ? '；' : '' }}
+                {{ m.proto }} {{ m.local_addr }}:{{ m.port }} → {{ m.processes.map(p => `${p.user || '?'}:${p.process}(#${p.pid})`).join('、') || '未知进程' }}{{ i < row.matches.length - 1 ? '；' : '' }}
               </span>
             </span>
             <span v-else>{{ row.detail || '-' }}</span>
@@ -188,8 +194,13 @@ const filteredPorts = computed(() => {
   if (!kw) return portsData.value
   return portsData.value.filter((p) =>
     String(p.port).includes(kw) ||
-    p.processes.some((x) => x.process.toLowerCase().includes(kw)))
+    p.processes.some((x) =>
+      x.process.toLowerCase().includes(kw) || (x.user || '').toLowerCase().includes(kw)))
 })
+
+function usersOf(row) {
+  return [...new Set(row.processes.map((p) => p.user).filter(Boolean))]
+}
 
 async function loadPorts(name) {
   portsLoading.value = true
