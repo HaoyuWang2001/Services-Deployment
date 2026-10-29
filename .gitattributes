@@ -1,0 +1,4 @@
+# 统一行尾：脚本必须 LF（节点 bash 执行，CRLF 会导致 set -o pipefail 等报错）
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
