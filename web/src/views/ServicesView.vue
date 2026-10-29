@@ -54,7 +54,7 @@
 </template>
 
 <script setup>
-import { onActivated, onMounted, reactive, ref } from 'vue'
+import { onActivated, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
@@ -113,7 +113,6 @@ async function load() {
   }
 }
 
-onMounted(load)
 onActivated(load)
 </script>
 

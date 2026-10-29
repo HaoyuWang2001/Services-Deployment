@@ -38,7 +38,9 @@ export const api = {
     request('GET', `/api/logs/services/${encodeURIComponent(service)}/nodes/${encodeURIComponent(node)}/archives`),
 }
 
-export const ACTION_TEXT = { deploy: '部署', start: '启动', stop: '停止', restart: '重启' }
+export const ACTION_TEXT = {
+  deploy: '部署', create: '创建', start: '启动', stop: '停止', restart: '重启', delete: '删除',
+}
 
 export function fmtTime(ts) {
   if (!ts) return '-'
@@ -49,11 +51,4 @@ export function fmtDuration(a, b) {
   if (!a || !b) return '-'
   const s = Math.max(0, Math.round(b - a))
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${s % 60}s`
-}
-
-export function fmtSize(n) {
-  if (n == null) return '-'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }

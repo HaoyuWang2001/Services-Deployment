@@ -11,6 +11,8 @@ import shlex
 from dataclasses import dataclass
 from typing import Optional
 
+import asyncssh
+
 from .config import Node, ServiceConfig
 from .deployer import deploy_service, perm_hint
 from .ssh import SSHPool, SSHError
@@ -290,6 +292,26 @@ async def list_ports(pool: SSHPool, node: Node) -> list[dict]:
     return parse_ports(res.stdout)
 
 
+# --------------------------------------------------------------- 监控 ----
+MAX_STDOUT = 200_000
+MAX_STDERR = 10_000
+
+
+def build_monitor_command(cmd: str) -> str:
+    """`sudo ` 前缀自动改写为 `sudo -n `，避免节点未配免密时挂死通道。"""
+    stripped = cmd.lstrip()
+    if stripped.startswith("sudo ") or stripped.rstrip() == "sudo":
+        lead = cmd[: len(cmd) - len(stripped)]
+        return f"{lead}sudo -n {stripped[5:].rstrip()}" if stripped[5:] else f"{lead}sudo -n"
+    return cmd
+
+
+def trim_output(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"\n...[输出过长，已截断，原始 {len(text)} 字符]"
+
+
 # --------------------------------------------------------------- 执行器 ----
 async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
                         run_id: str, variables: dict[str, str]) -> dict:
@@ -362,8 +384,6 @@ async def read_log(pool: SSHPool, node: Node, service: ServiceConfig,
 async def open_log_stream(pool: SSHPool, node: Node, service: ServiceConfig,
                           run_id: str, log_file: str, tail: int = 100) -> "LogStreamHandle":
     """在专用 SSH 连接上打开 tail -F 流（与连接池隔离，池连接重建不会中断日志流）。"""
-    import asyncssh
-
     cmd = build_log_read_command(service, run_id, log_file, tail, follow=True)
     conn = await pool.connect_dedicated(node)
     try:
@@ -377,8 +397,8 @@ async def open_log_stream(pool: SSHPool, node: Node, service: ServiceConfig,
 @dataclass
 class LogStreamHandle:
     """日志流句柄：持有专用连接与 tail 进程，关闭时一并释放。"""
-    conn: object
-    proc: object
+    conn: asyncssh.SSHClientConnection
+    proc: asyncssh.SSHClientProcess
 
     def close(self) -> None:
         for target in (self.proc, self.conn):

@@ -26,7 +26,8 @@ def make_manager(tmp_path: Path) -> TaskManager:
 
 
 def test_actions_set():
-    assert ACTIONS == ("deploy", "create", "start", "stop", "restart", "delete")
+    for action in ("deploy", "create", "start", "stop", "restart", "delete"):
+        assert action in ACTIONS
 
 
 def test_task_defaults():

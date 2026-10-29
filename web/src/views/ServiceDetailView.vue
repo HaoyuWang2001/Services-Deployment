@@ -177,7 +177,7 @@ import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch }
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
 import { statusType, statusText } from '../instanceStatus'
 const route = useRoute()
@@ -382,16 +382,14 @@ function setTimer() {
   if (autoRefresh.value) timer = setInterval(() => loadInstances(true), 10000)
 }
 
-const INST_OP_TEXT = { start: '启动', restart: '重启', stop: '停止', delete: '删除' }
-
 async function confirmInstOp(action, nodeList) {
   const extra = { delete: '（停止进程并从列表移除，节点文件保留）',
                   restart: '（停止后启动，日志续写并加分隔符）',
                   stop: '（终止进程，实例保留可再启动）' }[action] || ''
   try {
     await ElMessageBox.confirm(
-      `确定${INST_OP_TEXT[action]} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）${extra}？`,
-      `${INST_OP_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
+      `确定${ACTION_TEXT[action]} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）${extra}？`,
+      `${ACTION_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
   } catch { return false }
   return true
 }
@@ -399,8 +397,8 @@ async function confirmInstOp(action, nodeList) {
 async function submitInstOp(action, nodeList) {
   try {
     const task = await api.createTask({ service: name.value, action, nodes: nodeList })
-    trackTask(task.id, `${INST_OP_TEXT[action]}实例 ${name.value}`)
-    ElMessage.success(`${INST_OP_TEXT[action]}任务已提交（${task.id}）`)
+    trackTask(task.id, `${ACTION_TEXT[action]}实例 ${name.value}`)
+    ElMessage.success(`${ACTION_TEXT[action]}任务已提交（${task.id}）`)
     instTable.value?.clearSelection()
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)

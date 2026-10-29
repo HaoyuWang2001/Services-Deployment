@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from backend.executor import MAX_STDOUT, build_monitor_command, trim_output
 from backend.monitors import MonitorStore
-from backend.routers.monitors import MAX_STDOUT, _trim, build_monitor_command
 
 
 def test_monitor_store_crud_roundtrip(tmp_path):
@@ -70,8 +70,8 @@ def test_build_monitor_command_sudo_rewrite():
 
 def test_trim():
     short = "x" * 100
-    assert _trim(short, MAX_STDOUT) == short
+    assert trim_output(short, MAX_STDOUT) == short
     long_text = "y" * (MAX_STDOUT + 500)
-    trimmed = _trim(long_text, MAX_STDOUT)
+    trimmed = trim_output(long_text, MAX_STDOUT)
     assert len(trimmed) < len(long_text)
     assert "已截断" in trimmed

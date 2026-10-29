@@ -7,20 +7,19 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from pydantic import BaseModel
 
+from .. import executor
 from ..config import ConfigStore
 from ..deps import get_monitors, get_pool, get_store
 from ..monitors import MonitorStore
 from ..ssh import SSHPool
+from ..ws_utils import run_ws_pump
 
 log = logging.getLogger("sd.monitor")
 
 router = APIRouter(prefix="/api/monitors", tags=["monitors"])
-
-MAX_STDOUT = 200_000
-MAX_STDERR = 10_000
 
 
 # ---------------------------------------------------------------- CRUD ----
@@ -69,21 +68,6 @@ async def delete_monitor(monitor_id: str, store: MonitorStore = Depends(get_moni
 
 
 # ---------------------------------------------------------------- WS ----
-def build_monitor_command(cmd: str) -> str:
-    """`sudo ` 前缀自动改写为 `sudo -n `，避免节点未配免密时挂死通道。"""
-    stripped = cmd.lstrip()
-    if stripped.startswith("sudo ") or stripped.rstrip() == "sudo":
-        lead = cmd[: len(cmd) - len(stripped)]
-        return f"{lead}sudo -n {stripped[5:].rstrip()}" if stripped[5:] else f"{lead}sudo -n"
-    return cmd
-
-
-def _trim(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + f"\n...[输出过长，已截断，原始 {len(text)} 字符]"
-
-
 @router.websocket("/ws/monitor")
 async def ws_monitor(ws: WebSocket, nodes: str = Query(...),
                      interval: int = Query(default=2, ge=1, le=60),
@@ -100,7 +84,7 @@ async def ws_monitor(ws: WebSocket, nodes: str = Query(...),
         await ws.close()
         return
 
-    real_cmd = build_monitor_command(cmd)
+    real_cmd = executor.build_monitor_command(cmd)
     run_timeout = min(max(interval, 5), 30)
     queue: asyncio.Queue = asyncio.Queue()
 
@@ -119,8 +103,8 @@ async def ws_monitor(ws: WebSocket, nodes: str = Query(...),
             try:
                 res = await pool.run(node, real_cmd, timeout=run_timeout)
                 await put({"type": "output", "node": node_name,
-                           "stdout": _trim(res.stdout, MAX_STDOUT),
-                           "stderr": _trim(res.stderr, MAX_STDERR),
+                           "stdout": executor.trim_output(res.stdout, executor.MAX_STDOUT),
+                           "stderr": executor.trim_output(res.stderr, executor.MAX_STDERR),
                            "exit_code": res.exit_code, "ts": time.time()})
             except asyncio.CancelledError:
                 raise
@@ -131,31 +115,4 @@ async def ws_monitor(ws: WebSocket, nodes: str = Query(...),
             await asyncio.sleep(max(0.2, interval - elapsed))
 
     tasks = [asyncio.create_task(_loop(n)) for n in node_names]
-
-    async def _recv_watch() -> None:
-        try:
-            while True:
-                await ws.receive_text()
-        except WebSocketDisconnect:
-            pass
-
-    recv_task = asyncio.create_task(_recv_watch())
-    try:
-        while True:
-            try:
-                frame = await asyncio.wait_for(queue.get(), timeout=1.0)
-                await ws.send_text(frame)
-            except asyncio.TimeoutError:
-                if recv_task.done():
-                    break
-                continue
-    except Exception as e:  # noqa: BLE001
-        log.debug("监控 WS 结束: %s", e)
-    finally:
-        recv_task.cancel()
-        for t in tasks:
-            t.cancel()
-        try:
-            await ws.close()
-        except Exception:  # noqa: BLE001
-            pass
+    await run_ws_pump(ws, tasks, queue)

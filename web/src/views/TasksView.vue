@@ -83,7 +83,7 @@
 </template>
 
 <script setup>
-import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
+import { onActivated, onDeactivated, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { ACTION_TEXT, fmtDuration, fmtTime, api } from '../api'
@@ -132,7 +132,6 @@ function setTimer() {
   if (auto.value) timer = setInterval(() => load(true), 3000)
 }
 
-onMounted(() => { load(); setTimer() })
 onActivated(() => { load(true); setTimer() })
 onDeactivated(() => clearInterval(timer))
 onUnmounted(() => clearInterval(timer))

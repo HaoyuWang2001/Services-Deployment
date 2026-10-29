@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from fastapi.responses import PlainTextResponse
 
 from .. import executor
@@ -14,6 +14,7 @@ from ..config import TOKEN_RE, ConfigStore
 from ..deps import get_instances, get_pool, get_store
 from ..instances import InstanceRegistry
 from ..ssh import SSHPool, SSHError
+from ..ws_utils import run_ws_pump
 
 log = logging.getLogger("sd.logs")
 
@@ -164,35 +165,4 @@ async def ws_logs(ws: WebSocket, service: str, nodes: str = Query(...),
                                          run_id, log_file, tail))
         for name in node_names
     ]
-
-    async def _recv_watch() -> None:
-        try:
-            while True:
-                await ws.receive_text()  # 忽略客户端消息，仅用于感知断连
-        except WebSocketDisconnect:
-            pass
-
-    recv_task = asyncio.create_task(_recv_watch())
-    try:
-        while True:
-            try:
-                frame = await asyncio.wait_for(queue.get(), timeout=1.0)
-                await ws.send_text(frame)
-            except asyncio.TimeoutError:
-                if recv_task.done() or all(s.done() for s in streams):
-                    while not queue.empty():
-                        await ws.send_text(queue.get_nowait())
-                    break
-                continue
-            if recv_task.done():
-                break
-    except Exception as e:  # noqa: BLE001
-        log.debug("WS 日志流结束: %s", e)
-    finally:
-        recv_task.cancel()
-        for s in streams:
-            s.cancel()
-        try:
-            await ws.close()
-        except Exception:  # noqa: BLE001
-            pass
+    await run_ws_pump(ws, streams, queue)

@@ -27,7 +27,7 @@
     </template>
 
     <el-table ref="instTable" :data="instances" v-loading="loading" size="small" row-key="key"
-              :element-loading-text="undefined" @selection-change="(rows) => (selected = rows)"
+              @selection-change="(rows) => (selected = rows)"
               empty-text="暂无实例（在各服务页创建实例）">
       <el-table-column type="selection" reserve-selection width="45" />
       <el-table-column prop="service" label="服务" min-width="140" />
@@ -55,7 +55,7 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } fro
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { api } from '../api'
+import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
 import { statusType, statusText } from '../instanceStatus'
 
@@ -91,7 +91,6 @@ function setTimer() {
   if (autoRefresh.value) timer = setInterval(() => load(true), 10000)
 }
 
-const ACTION_TEXT = { start: '启动', restart: '重启', stop: '停止', delete: '删除' }
 
 function viewLog(row) {
   router.push({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })

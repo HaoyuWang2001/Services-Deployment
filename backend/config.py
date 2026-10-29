@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_validator, model_validator
 
 log = logging.getLogger("sd.config")
 
@@ -71,10 +71,13 @@ class ClusterConfig(BaseModel):
     defaults: ClusterDefaults = Field(default_factory=ClusterDefaults)
     nodes: list[NodeSpec] = Field(default_factory=list)
 
-    @property
-    def resolved(self) -> list[Node]:
+    _resolved: list[Node] = PrivateAttr(default_factory=list)
+    _by_name: dict[str, Node] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _rebuild_index(self) -> "ClusterConfig":
         d = self.defaults
-        return [
+        self._resolved = [
             Node(
                 name=n.name,
                 ip=n.ip,
@@ -86,12 +89,15 @@ class ClusterConfig(BaseModel):
             )
             for n in self.nodes
         ]
+        self._by_name = {n.name: n for n in self._resolved}
+        return self
+
+    @property
+    def resolved(self) -> list[Node]:
+        return self._resolved
 
     def node(self, name: str) -> Optional[Node]:
-        for n in self.resolved:
-            if n.name == name:
-                return n
-        return None
+        return self._by_name.get(name)
 
 
 def load_cluster(path: Path) -> ClusterConfig:
@@ -107,15 +113,15 @@ def load_cluster(path: Path) -> ClusterConfig:
         raise ValueError(f"cluster.json 不是合法 JSON: {e}") from e
     if not isinstance(data, dict):
         raise ValueError("cluster.json 顶层必须是 JSON 对象")
-    cfg = ClusterConfig(defaults=ClusterDefaults(**(data.get("defaults") or {})))
+    defaults = ClusterDefaults(**(data.get("defaults") or {}))
     raw_nodes = data.get("nodes", [])
     if not isinstance(raw_nodes, list):
         raise ValueError('"nodes" 必须是数组')
-    from pydantic import ValidationError
     try:
-        cfg.nodes = [NodeSpec(**n) for n in raw_nodes if isinstance(n, dict)]
+        nodes = [NodeSpec(**n) for n in raw_nodes if isinstance(n, dict)]
     except ValidationError as e:
         raise ValueError(f"节点配置无效: {e}") from e
+    cfg = ClusterConfig(defaults=defaults, nodes=nodes)
     names = [n.name for n in cfg.nodes]
     dups = sorted({x for x in names if names.count(x) > 1})
     if dups:
