@@ -71,6 +71,22 @@ def test_start_command_special_chars_in_var():
     assert "env TOKEN='a b'\"'\"'c'" in cmd
 
 
+def test_start_command_auto_cleanup_when_stop_script():
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 5})
+    cmd = build_start_command(svc, "r1", {})
+    assert "自动清理 (stop.sh) =====" in cmd          # 清理分隔符
+    assert "bash stop.sh 2>&1" in cmd                  # 自动执行 stop.sh
+    assert "cout=$(bash stop.sh 2>&1); crc=$?" in cmd
+    assert "[stop.sh 退出码=%s]" in cmd                # 记录 stop.sh 退出码
+    assert "exit $rc" in cmd                           # 实例退出码不受 stop.sh 影响
+
+
+def test_start_command_no_auto_cleanup_without_stop_script():
+    cmd = build_start_command(make_svc(), "r1", {})
+    assert "自动清理" not in cmd
+    assert "stop.sh" not in cmd
+
+
 # ------------------------------------------------------------- stop 命令 ----
 def test_stop_command_strict_semantics():
     svc = make_svc()
@@ -79,6 +95,9 @@ def test_stop_command_strict_semantics():
     # 指纹校验：旧格式拒绝 + PID 复用拒绝
     assert 'echo LEGACY=$pid' in cmd
     assert 'echo PIDREUSED=$pid' in cmd
+    # 组判定：组长死但组未空 → 继续整组清剿（不提前 STOPPED）
+    assert ("if ! kill -0 $pid 2>/dev/null; then "
+            "if ! kill -0 -- -$pid 2>/dev/null; then echo STOPPED=$pid; exit 0; fi;") in cmd
     # 组杀 + 单杀（TERM 与 KILL）
     assert "kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null" in cmd
     assert "kill -9 -- -$pid 2>/dev/null; kill -9 $pid 2>/dev/null" in cmd
@@ -87,6 +106,17 @@ def test_stop_command_strict_semantics():
     assert "echo STOPPED=$pid" in cmd
     assert cmd.rstrip().endswith("echo STOPFAIL=$pid; exit 1; else echo STOPPED=$pid; fi")
     assert "-lt 5" in cmd  # timeout=5 → 等待循环 5 次
+
+
+def test_stop_command_with_logfile_writes_kill_hint():
+    svc = make_svc()
+    cmd = build_kill_stop_command(svc, logfile="'logs/r1/master.log'")
+    assert 'echo "\\$ kill -- -$pid; kill $pid" >> ' + "'logs/r1/master.log'" in cmd
+
+
+def test_stop_command_without_logfile_no_hint():
+    cmd = build_kill_stop_command(make_svc())
+    assert "$ kill" not in cmd
 
 
 def test_stop_command_legacy_hint_contains_manual_steps():
@@ -105,9 +135,11 @@ def test_stop_script_command():
 def test_status_command_tick_check():
     cmd = build_status_command(make_svc())
     assert "read pid tick < run/mooncake-master.pid" in cmd
+    # 组判定：组长或组内任一存活均视为运行中
+    assert "if ! kill -0 $pid 2>/dev/null && ! kill -0 -- -$pid 2>/dev/null;" in cmd
     assert "echo LEGACY $pid" in cmd
     assert "echo REUSED $pid" in cmd
-    assert "echo RUNNING $pid" in cmd
+    assert cmd.count("echo RUNNING $pid") == 2  # 组长存活 + 组残留两种路径
     assert "echo DEAD $pid rc=-" in cmd  # 无 run_id 时无码
     assert "exit_code" not in cmd
 

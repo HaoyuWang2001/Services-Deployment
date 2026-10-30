@@ -62,6 +62,24 @@ class TaskError(ValueError):
     pass
 
 
+def _not_running_message(st, inst) -> str:
+    """停止/重启前置校验失败时的引导信息。"""
+    if st.state == "dead":
+        if inst is not None and inst.stopped:
+            return "实例已停止，无需停止；可「启动」或「删除」"
+        code = f"(码={st.exit_code})" if st.exit_code is not None else ""
+        return f"实例已退出{code}，无需停止；可「启动」或「删除」"
+    if st.state == "nopidfile":
+        return "实例未运行（尚未启动）"
+    if st.state == "nows":
+        return "服务未部署到该节点"
+    if st.state == "legacy":
+        return f"存在旧格式运行实例(PID {st.pid})，请按提示手动处理后再操作"
+    if st.state == "reused":
+        return "PID 已被其他进程复用，无法安全操作；可「删除」实例"
+    return f"实例状态异常({st.state})"
+
+
 class TaskManager:
     def __init__(self, pool: SSHPool, store: ConfigStore,
                  instances: InstanceRegistry, data_dir: Path) -> None:
@@ -235,21 +253,30 @@ class TaskManager:
                     await self._launch(task, service, node, node_name, sub, run_id)
 
             elif task.action == "restart":
+                # 仅限运行中实例：系统组杀 → stop.sh 清理 → 重新启动（同 run_id 续写）
                 async with self._start_lock(service.name, node_name):
-                    run_id = self._ensure_instance(task, service, node_name)
-                    # 停止阶段失败（LEGACY/PIDREUSED/STOPFAIL）直接中止，避免双实例
-                    await executor.stop_service(self.pool, node, service)
+                    inst = self.instances.get(service.name, node_name)
+                    run_id = inst.run_id if inst else None
+                    st = await executor.service_status(self.pool, node, service, run_id)
+                    if st.state != "running":
+                        raise executor.ExecError(
+                            f"实例不在运行中，无需重启；{_not_running_message(st, inst)}")
+                    await executor.stop_service(self.pool, node, service, run_id=run_id)
                     await self._launch(task, service, node, node_name, sub, run_id)
 
             elif task.action == "stop":
-                # 停止：终止进程但保留实例记录（可再次启动），并标记已停止
-                out = await executor.stop_service(self.pool, node, service)
-                sub.detail = out
-                self.instances.mark_stopped(service.name, node_name)
+                # 仅限运行中实例：系统组杀进程 → stop.sh 应用清理；实例保留
                 inst = self.instances.get(service.name, node_name)
+                run_id = inst.run_id if inst else None
+                st = await executor.service_status(self.pool, node, service, run_id)
+                if st.state != "running":
+                    raise executor.ExecError(_not_running_message(st, inst))
+                out = await executor.stop_service(self.pool, node, service, run_id=run_id)
+                sub.detail = out
+                sub.run_id = run_id
                 if inst is not None:
-                    sub.run_id = inst.run_id
                     sub.log_path = inst.log_path
+                self.instances.mark_stopped(service.name, node_name)
 
             elif task.action == "delete":
                 inst = self.instances.get(service.name, node_name)
@@ -258,15 +285,22 @@ class TaskManager:
                 else:
                     sub.run_id = inst.run_id
                     sub.log_path = inst.log_path
-                    try:
-                        out = await executor.stop_service(self.pool, node, service)
-                        sub.detail = out
-                    except executor.ExecError as e:
-                        if "PIDREUSED" not in str(e):
-                            raise  # STOPFAIL / LEGACY：无法安全停止，中止删除
-                        sub.detail = f"PID 已被复用，视为无本方进程: {e}"
+                    st = await executor.service_status(self.pool, node, service, inst.run_id)
+                    if st.state in ("running", "legacy"):
+                        # 运行中：组杀 + stop.sh 清理后注销
+                        try:
+                            out = await executor.stop_service(
+                                self.pool, node, service, run_id=inst.run_id)
+                            sub.detail = out
+                        except executor.ExecError as e:
+                            if "PIDREUSED" not in str(e):
+                                raise  # STOPFAIL / LEGACY：无法安全停止，中止删除
+                            sub.detail = f"PID 已被复用，视为无本方进程: {e}"
+                        sub.detail = (sub.detail or "") + "；实例已删除"
+                    else:
+                        # 非运行中（已停止/已退出/未启动）：直接注销，不再执行 stop.sh
+                        sub.detail = f"实例未在运行（{st.state}），直接删除（跳过 stop.sh）"
                     self.instances.unregister(service.name, node_name)
-                    sub.detail = (sub.detail or "") + "；实例已删除"
 
             sub.status = "success"
         except Exception as e:  # noqa: BLE001

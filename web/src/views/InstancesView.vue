@@ -15,7 +15,7 @@
           <el-button size="small" type="warning" plain :disabled="!canRestart" @click="batch('restart')">
             重启选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="danger" plain :disabled="!selected.length" @click="batch('stop')">
+          <el-button size="small" type="danger" plain :disabled="!canStop" @click="batch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
           <el-button size="small" type="danger" :disabled="!selected.length" @click="batch('delete')">
@@ -67,9 +67,11 @@ const loading = ref(false)
 const autoRefresh = ref(true)
 let timer = null
 
-// 重启仅对「运行中」实例有意义：任一选中实例未运行则置灰
-const canRestart = computed(() =>
+// 重启/停止仅对「运行中」实例有意义：任一选中实例未运行则置灰
+const allRunning = computed(() =>
   selected.value.length > 0 && selected.value.every((r) => r.status === 'running'))
+const canRestart = allRunning
+const canStop = allRunning
 
 async function load(silent = false) {
   if (!silent) loading.value = true

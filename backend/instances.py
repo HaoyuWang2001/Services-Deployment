@@ -111,10 +111,12 @@ class InstanceRegistry:
                 d["note"] = f"配置缺失: {e}"
                 return d
             st = await executor.service_status(pool, node, svc, inst.run_id)
-            if st.state == "dead" and inst.stopped:
-                d["status"] = "stopped"  # 停止任务终止的实例：区别于异常退出
+            # 显示优先级：有退出码 → 已退出(N)（自然退出，含自动清理已完成）；
+            # 无码 + 停止标记 → 已停止；其余按探活
+            if st.state == "dead" and inst.stopped and st.exit_code is None:
+                d["status"] = "stopped"
             else:
-                d["status"] = st.state  # running | dead | legacy | reused | nopidfile | nows | unknown
+                d["status"] = st.state
             d["probe_pid"] = st.pid
             d["exit_code"] = st.exit_code
             return d

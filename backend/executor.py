@@ -41,6 +41,8 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
 
     - 重定向使用 >>（续写），启动前写 "===== [时间] 实例启动 =====" 分隔符
     - 退出码双写：exit_code（最近一次）+ exit_codes.log（历史，时间+码）
+    - 配置了 stop.script 时：start.sh 自然退出（未被杀死）后自动执行 stop.sh
+      完成清理（输出与其退出码写入日志，不影响实例自身退出码）
     - 组杀（停止）时 wrapper 一并被杀、不写码 → 无退出码 = 未正常结束
     """
     ws = shell_ws(service.workspace)
@@ -52,10 +54,23 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     logdir = f"logs/{run_id}"
     logfile = f"{logdir}/{service.start.log}"
     pidfile = f"run/{service.name}.pid"
+    auto_cleanup = ""
+    if service.stop.script:
+        stop_script = shlex.quote(service.stop.script)
+        qlog = shlex.quote(logfile)
+        auto_cleanup = (
+            f'echo "===== [$(date \'+%F %T\')] 自动清理 (stop.sh) =====" >> {qlog}; '
+            f'echo "\\$ bash {stop_script}" >> {qlog}; '
+            f'cout=$(bash {stop_script} 2>&1); crc=$?; '
+            f'printf \'%s\\n\' "$cout" >> {qlog}; '
+            f'printf \'[stop.sh 退出码=%s]\\n\' "$crc" >> {qlog}; '
+        )
     inner = (f"bash {script}"
              + (f" {args}" if args else "")
              + f"; rc=$?; echo $rc > {shlex.quote(f'{logdir}/exit_code')}; "
-             + f"echo \"[$(date '+%F %T')] $rc\" >> {shlex.quote(f'{logdir}/exit_codes.log')}; exit $rc")
+             + f"echo \"[$(date '+%F %T')] $rc\" >> {shlex.quote(f'{logdir}/exit_codes.log')}; "
+             + auto_cleanup
+             + "exit $rc")
     separator = (f"echo \"===== [$(date '+%F %T')] 实例启动 =====\" "
                  f">> {shlex.quote(logfile)}; ")
     return (
@@ -81,29 +96,37 @@ def build_create_dirs_command(service: ServiceConfig, run_id: str) -> str:
     return f"mkdir -p {ws}/{logdir} {ws}/run && rm -f {ws}/{pidfile}"
 
 
-def build_kill_stop_command(service: ServiceConfig) -> str:
+def build_kill_stop_command(service: ServiceConfig, logfile: Optional[str] = None) -> str:
     """停止命令：指纹校验防误杀 → 整组终止 → 严格验证结果。
 
+    - 组长已死但组内仍有残留进程（如孤儿子进程）时，跳过指纹校验直接整组清剿
+    - logfile（已 quote 的路径）提供时：kill 前向日志写 "$ kill" 提示行
     输出与退出码：
-      STOPPED=<pid>   成功（exit 0）；进程本就已死也走此路径
-      LEGACY=<pid>    旧格式 pid 文件（无指纹，升级前启动），需手动处理（exit 1）
-      PIDREUSED=<pid> 指纹不匹配，PID 已被复用，拒绝误杀（exit 1）
-      STOPFAIL=<pid>  组杀+强杀后仍存活，如实报失败（exit 1）
-      NOPIDFILE/NOWS  无 pid 文件 / 未部署（exit 0，视为无需停止）
+      STOPPED=<pid>   成功（exit 0）
+      LEGACY=<pid>    旧格式 pid 文件（exit 1）
+      PIDREUSED=<pid> 指纹不匹配（exit 1）
+      STOPFAIL=<pid>  强杀后仍存活（exit 1）
+      NOPIDFILE/NOWS  exit 0，视为无需停止
     """
     ws = shell_ws(service.workspace)
     pidfile = f"run/{service.name}.pid"
     waits = max(1, int(round(service.stop.timeout)))
     alive = "{ kill -0 -- -$pid 2>/dev/null || kill -0 $pid 2>/dev/null; }"
+    kill_hint = (f'echo "\\$ kill -- -$pid; kill $pid" >> {logfile}; '
+                 if logfile else "")
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
         f"read pid tick < {pidfile}; "
-        f"if ! kill -0 $pid 2>/dev/null; then echo STOPPED=$pid; exit 0; fi; "
-        f"if [ -z \"$tick\" ]; then "
+        # 组长死且组空 → 已停止；组长死但组未空 → 落入下方整组清剿（跳过指纹校验）
+        f"if ! kill -0 $pid 2>/dev/null; then "
+        f"if ! kill -0 -- -$pid 2>/dev/null; then echo STOPPED=$pid; exit 0; fi; "
+        f"elif [ -z \"$tick\" ]; then "
         f"echo LEGACY=$pid; echo \"旧格式实例(升级前启动): 请在节点上手动执行 kill -9 $pid 并删除 {pidfile}\"; exit 1; fi; "
-        f"ctick=$({_TICK_CMD}); "
-        f"if [ \"$ctick\" != \"$tick\" ]; then echo PIDREUSED=$pid; echo 'PID 已被其他进程复用，为避免误杀已终止停止操作'; exit 1; fi; "
+        f"if kill -0 $pid 2>/dev/null; then ctick=$({_TICK_CMD}); "
+        f"if [ \"$ctick\" != \"$tick\" ]; then echo PIDREUSED=$pid; "
+        f"echo 'PID 已被其他进程复用，为避免误杀已终止停止操作'; exit 1; fi; fi; "
+        f"{kill_hint}"
         f"kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; "
         f"i=0; while [ $i -lt {waits} ] && {alive}; do sleep 1; i=$((i+1)); done; "
         f"if {alive}; then kill -9 -- -$pid 2>/dev/null; kill -9 $pid 2>/dev/null; "
@@ -130,10 +153,12 @@ def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
         f"read pid tick < {pidfile}; "
-        f"if ! kill -0 $pid 2>/dev/null; then {dead}fi; "
+        # 组长或组内任一存活均视为运行中（组长死但组未空 = 存在孤儿进程）
+        f"if ! kill -0 $pid 2>/dev/null && ! kill -0 -- -$pid 2>/dev/null; then {dead}fi; "
         f"if [ -z \"$tick\" ]; then echo LEGACY $pid; exit 0; fi; "
-        f"ctick=$({_TICK_CMD}); "
-        f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; else echo RUNNING $pid; fi"
+        f"if kill -0 $pid 2>/dev/null; then ctick=$({_TICK_CMD}); "
+        f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; else echo RUNNING $pid; fi; "
+        f"else echo RUNNING $pid; fi"
     )
 
 
@@ -336,18 +361,48 @@ async def create_dirs(pool: SSHPool, node: Node, service: ServiceConfig, run_id:
         raise ExecError(f"创建日志目录失败: {err[:300]}{perm_hint(err)}")
 
 
-async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig) -> str:
-    """停止服务：优先 stop.sh，之后执行 pid kill 兜底。返回输出摘要。"""
+async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
+                       run_id: Optional[str] = None) -> str:
+    """停止实例：先系统整组终止进程（进程终止由系统负责），成功后执行 stop.sh 应用清理。
+
+    run_id 提供时全过程写入实例日志文件：停止分隔符 → "$ kill" 提示行与输出
+    → "$ bash stop.sh" 提示行与输出。任一步失败中止并抛错。
+    """
     outputs: list[str] = []
-    if service.stop.script:
-        res = await pool.run(node, build_stop_script_command(service), timeout=120)
-        if not res.ok:
-            raise ExecError(f"stop.sh 失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")
-        outputs.append(res.stdout.strip())
-    res = await pool.run(node, build_kill_stop_command(service), timeout=service.stop.timeout + 60)
+    ws = shell_ws(service.workspace)
+    logfile = None
+    logref = None
+    if run_id:
+        logdir = shlex.quote(f"logs/{run_id}")
+        # 绝对引用（~/ 形式不 quote 以便展开）：SSH exec 工作目录是 home，不能用相对路径
+        logref = shell_ws(f"{service.workspace}/logs/{run_id}/{service.start.log}")
+        logfile = logref
+        header = (f"cd {ws} 2>/dev/null && mkdir -p {ws}/{logdir} && "
+                  f"echo \"===== [$(date '+%F %T')] 停止实例 =====\" >> {logref}; true")
+        await pool.run(node, header, timeout=15)
+
+    def wrap(inner: str, hint: Optional[str] = None) -> str:
+        """输出双写：追加到实例日志文件，同时回传后端（退出码透传）。"""
+        if not logref:
+            return inner
+        pre = f'echo "{hint}" >> {logref}; ' if hint else ""
+        return (f"{pre}out=$( {{ {inner}; }} 2>&1); rc=$?; "
+                f'printf \'%s\\n\' "$out" >> {logref} 2>/dev/null; '
+                f'printf \'%s\\n\' "$out"; exit $rc')
+
+    kill_cmd = build_kill_stop_command(service, logfile=logfile)
+    res = await pool.run(node, wrap(kill_cmd), timeout=service.stop.timeout + 60)
     if not res.ok:
         raise ExecError(f"停止命令失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")
     outputs.append(res.stdout.strip())
+
+    if service.stop.script:
+        hint = f"\\$ bash {shlex.quote(service.stop.script)}"
+        res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint),
+                             timeout=120)
+        if not res.ok:
+            raise ExecError(f"stop.sh 失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")
+        outputs.append(res.stdout.strip())
     return " | ".join(o for o in outputs if o) or "done"
 
 

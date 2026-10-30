@@ -81,7 +81,7 @@
               重启选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger" plain
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('stop')">
+                       :disabled="!canStop || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger"
@@ -373,9 +373,11 @@ async function loadInstances(silent = false) {
   finally { if (!silent) instLoading.value = false }
 }
 
-// 重启仅对「运行中」实例有意义：任一选中实例未运行则置灰
-const canRestart = computed(() =>
+// 重启/停止仅对「运行中」实例有意义：任一选中实例未运行则置灰
+const allInstsRunning = computed(() =>
   selectedInsts.value.length > 0 && selectedInsts.value.every((r) => r.status === 'running'))
+const canRestart = allInstsRunning
+const canStop = allInstsRunning
 
 function setTimer() {
   clearInterval(timer)
