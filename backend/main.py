@@ -1,7 +1,13 @@
-"""FastAPI 应用装配与入口。"""
+"""FastAPI 应用装配与入口。
+
+启动：python -m backend.main [--host 127.0.0.1] [--port 8310]
+（--host/--port 亦可经环境变量 HOST/PORT 指定，命令行参数优先）
+"""
 from __future__ import annotations
 
+import argparse
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -98,3 +104,17 @@ async def index():
 
 if (STATIC_DIR / "index.html").is_file():
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    parser = argparse.ArgumentParser(description="Services-Deployment 管理端（集群服务部署管理）")
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"),
+                        help="监听地址（默认 127.0.0.1；局域网访问请用 0.0.0.0）")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8310")),
+                        help="监听端口（默认 8310）")
+    args = parser.parse_args()
+    # timeout_graceful_shutdown：开着日志/监控 WS 时（尤其 Windows）优雅关闭会挂住，5 秒强制退出
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                timeout_graceful_shutdown=5)
