@@ -55,17 +55,13 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 ### 3. 启动后端
 
 ```bash
-# Linux / macOS
-./scripts/start_backend.sh
-# Windows
-scripts\start_backend.bat
-# 或手动
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8310
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8310
 ```
 
-打开 `http://<管理端IP>:8310`（WebUI）或 `http://<管理端IP>:8310/docs`（OpenAPI 文档）。
-端口可用环境变量 `PORT` 修改。仓库已附带构建好的 WebUI（`backend/static/`），
-如需修改前端：`cd web && npm install && npm run build`。
+- 打开 `http://127.0.0.1:8310`（WebUI）或 `http://127.0.0.1:8310/docs`（OpenAPI 文档）
+- 需要局域网其他机器（如 Windows PC 的浏览器 / Agent）访问时，改用 `--host 0.0.0.0`
+- 也可用 `python -m backend.main` 启动，监听地址/端口经环境变量 `HOST` / `PORT` 指定
+- 仓库已附带构建好的 WebUI（`backend/static/`）；如需修改前端：`cd web && npm install && npm run build`
 
 ## 服务定义：`services/<服务名>/`
 
@@ -204,7 +200,6 @@ websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h
 ├── services/             # 服务定义（service.json + 脚本）
 ├── backend/              # FastAPI 后端（api / ssh / deployer / executor / tasks / logs）
 ├── web/                  # Vue3 + Element Plus 前端源码
-├── scripts/              # 双平台启动脚本
 ├── tests/                # 单元测试（pytest）
 └── data/                 # 运行时状态（tasks.json / instances.json，自动生成）
 ```

@@ -104,5 +104,6 @@ if (STATIC_DIR / "index.html").is_file():
 if __name__ == "__main__":
     import uvicorn
 
+    host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8310"))
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run("backend.main:app", host=host, port=port, log_level="info")
