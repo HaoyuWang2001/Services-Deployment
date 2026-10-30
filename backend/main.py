@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -99,14 +98,3 @@ async def index():
 
 if (STATIC_DIR / "index.html").is_file():
     app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    host = os.environ.get("HOST", "127.0.0.1")
-    port = int(os.environ.get("PORT", "8310"))
-    # 优雅关闭超时：开着日志/监控 WS 时（尤其 Windows）关闭会等待连接收尾而挂住，
-    # 5 秒后强制退出，保证 Ctrl+C 总能关掉
-    uvicorn.run("backend.main:app", host=host, port=port, log_level="info",
-                timeout_graceful_shutdown=5)

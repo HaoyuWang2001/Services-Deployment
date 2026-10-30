@@ -55,12 +55,12 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 ### 3. 启动后端
 
 ```bash
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8310 --timeout-graceful-shutdown 5
+python backend/server.py --host 127.0.0.1 --port 8310
 ```
 
 - 打开 `http://127.0.0.1:8310`（WebUI）或 `http://127.0.0.1:8310/docs`（OpenAPI 文档）
 - 需要局域网其他机器（如 Windows PC 的浏览器 / Agent）访问时，改用 `--host 0.0.0.0`
-- 也可用 `python -m backend.main` 启动，监听地址/端口经环境变量 `HOST` / `PORT` 指定
+- 已内置优雅关闭超时（5s）：开着日志/监控页面时 Ctrl+C 也能可靠退出
 - 仓库已附带构建好的 WebUI（`backend/static/`）；如需修改前端：`cd web && npm install && npm run build`
 
 ## 服务定义：`services/<服务名>/`
