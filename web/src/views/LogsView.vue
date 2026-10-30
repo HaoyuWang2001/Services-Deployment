@@ -49,7 +49,8 @@
           <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, 1)">下一个</el-button>
           <el-button size="small" :disabled="!matchInfo(tab).list.length" @click="jumpMatch(tab, 'last')">最后一个</el-button>
           <el-switch v-model="tab.filterOnly" size="small" active-text="仅显示匹配行" :disabled="!matchInfo(tab).kw" />
-          <span v-if="tab.reconnecting" class="reconnect-hint">⟳ 自动重连中（第 {{ tab.reconnectAttempts }} 次）</span>
+            <span v-if="tab.gaveUp" class="reconnect-hint gave-up">✖ 服务不可达，已暂停自动重连</span>
+            <span v-else-if="tab.reconnecting" class="reconnect-hint">⟳ 自动重连中（第 {{ tab.reconnectAttempts }} 次）</span>
         </div>
 
         <div class="terminal" :ref="(el) => setTerm(tab.id, el)">
@@ -219,6 +220,8 @@ function newTab(preset = {}, autoConnect = false) {
     manualStop: false,
     reconnecting: false,
     reconnectAttempts: 0,
+    failedStreak: 0,     // 连续“建连失败”次数（onopen 从未触发）
+    gaveUp: false,       // 连续失败达上限后暂停自动重连
     reconnectTimer: null,
     search: '',
     filterOnly: false,
@@ -280,7 +283,7 @@ function disconnectWs(tab) {
 }
 
 function scheduleReconnect(tab) {
-  if (!tab.autoReconnect || tab.manualStop) return
+  if (!tab.autoReconnect || tab.manualStop || tab.gaveUp) return
   if (!tabs.includes(tab) || tab.reconnectTimer) return
   tab.reconnecting = true
   tab.reconnectAttempts += 1
@@ -291,6 +294,8 @@ function scheduleReconnect(tab) {
   }, 3000)
 }
 
+const MAX_FAILED_STREAK = 5
+
 function toggle(tab) {
   if (tab.connected) {
     tab.manualStop = true
@@ -300,6 +305,9 @@ function toggle(tab) {
     disconnectWs(tab)
     push(tab, 'notice', '', '已断开连接')
   } else {
+    // 手动重试：重置失败计数与放弃状态
+    tab.failedStreak = 0
+    tab.gaveUp = false
     connect(tab)
   }
 }
@@ -322,10 +330,13 @@ function connect(tab) {
   })
   push(tab, 'notice', '', `连接 ${tab.service} @ ${tab.nodeSel.join(', ')}（run_id=${tab.runId || 'latest'}）...`)
   tab.ws = new WebSocket(`${proto}://${location.host}/api/logs/ws/logs?${params}`)
+  let opened = false
   tab.ws.onopen = () => {
+    opened = true
     tab.connected = true
     tab.reconnecting = false
     tab.reconnectAttempts = 0
+    tab.failedStreak = 0
   }
   tab.ws.onmessage = (ev) => {
     try {
@@ -343,6 +354,18 @@ function connect(tab) {
   }
   tab.ws.onclose = () => {
     tab.connected = false
+    if (!opened) {
+      // 建连失败（服务不可达）：连续达上限则暂停自动重连
+      tab.failedStreak += 1
+      if (tab.failedStreak >= MAX_FAILED_STREAK) {
+        tab.reconnecting = false
+        tab.gaveUp = true
+        clearTimeout(tab.reconnectTimer)
+        tab.reconnectTimer = null
+        push(tab, 'error', '', `✖ 连续 ${MAX_FAILED_STREAK} 次无法连接服务，已暂停自动重连（点击「连接」手动重试）`)
+        return
+      }
+    }
     push(tab, 'notice', '', '连接已关闭')
     scheduleReconnect(tab)
   }
@@ -367,7 +390,11 @@ function handleQuery() {
     [...t.nodeSel].sort().join(',') === [...nodesArr].sort().join(','))
   if (existing) {
     activeTabId.value = String(existing.id)
-    if (q.connect === '1' && !existing.connected) connect(existing)
+    if (q.connect === '1' && !existing.connected) {
+      existing.failedStreak = 0
+      existing.gaveUp = false
+      connect(existing)
+    }
   } else {
     newTab({ service: String(q.service), nodes: nodesArr, runId }, q.connect === '1')
   }
@@ -417,6 +444,7 @@ onUnmounted(() => tabs.forEach((t) => {
 }
 .match-count { color: var(--el-text-color-secondary); font-size: 12px; min-width: 44px; text-align: center; font-family: Consolas, monospace; }
 .reconnect-hint { margin-left: auto; color: var(--el-color-warning); font-size: 12px; }
+.reconnect-hint.gave-up { color: var(--el-color-danger); }
 .terminal {
   flex: 1;
   background: #1e1e2e;

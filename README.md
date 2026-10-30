@@ -55,7 +55,7 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 ### 3. 启动后端
 
 ```bash
-python -m uvicorn backend.main:app --host 127.0.0.1 --port 8310
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8310 --timeout-graceful-shutdown 5
 ```
 
 - 打开 `http://127.0.0.1:8310`（WebUI）或 `http://127.0.0.1:8310/docs`（OpenAPI 文档）
