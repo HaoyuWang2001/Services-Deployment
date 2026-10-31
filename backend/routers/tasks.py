@@ -12,17 +12,18 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 class TaskCreateRequest(BaseModel):
     service: str
-    action: str  # deploy | create | start | stop | restart | delete
+    action: str  # deploy | create | start | stop | restart | delete | clean
     nodes: list[str] = Field(min_length=1)
     variables: dict[str, str] = Field(default_factory=dict)
     auto_start: bool = True  # create 动作：创建后是否立即启动
+    paths: list[str] = Field(default_factory=list)  # clean 动作：补录的待清理目录
 
 
 @router.post("", status_code=202)
 async def create_task(req: TaskCreateRequest, tm: TaskManager = Depends(get_tasks)):
     try:
         task = await tm.create(req.service, req.action, req.nodes, req.variables,
-                               auto_start=req.auto_start)
+                               auto_start=req.auto_start, paths=req.paths)
     except TaskError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return task.model_dump()

@@ -56,6 +56,8 @@
         <el-checkbox v-model="autoStart" class="auto-start">立即启动</el-checkbox>
         <el-button class="start-btn" size="small" type="primary"
                    :disabled="blockReasons.length > 0" @click="submit('create')">创建实例</el-button>
+        <el-button size="small" type="danger" plain
+                   :disabled="blockReasons.length > 0" @click="openClean">清理</el-button>
         <span v-if="blockReasons.length" class="dirty-hint">{{ blockReasons.join('；') }}</span>
         <span v-else class="hint-secondary">创建后：启动 / 重启 / 停止 / 删除均在实例层级操作</span>
       </div>
@@ -113,6 +115,30 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 清理对话框 -->
+    <el-dialog v-model="cleanDialog" title="清理服务文件" width="680px">
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
+                title="将删除所选节点上该服务的全部部署目录（含历史目录与日志，整目录删除）；仅当节点上不存在实例时允许清理" />
+      <div v-for="(dirs, node) in cleanDirs" :key="node" class="clean-node">
+        <div class="clean-node-name">{{ node }}</div>
+        <div v-for="d in dirs" :key="d" class="clean-dir">
+          <span class="clean-dir-path">{{ d }}</span>
+          <el-tag v-if="d === cfg?.workspace" size="small">当前</el-tag>
+          <el-tag v-else size="small" type="info">历史</el-tag>
+        </div>
+      </div>
+      <el-form label-width="80px" style="margin-top: 10px">
+        <el-form-item label="补录路径">
+          <el-input v-model="extraPaths" type="textarea" :rows="2"
+                    placeholder="每行一个绝对路径（本系统部署历史之外、确属该服务的旧目录）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cleanDialog = false">取消</el-button>
+        <el-button type="danger" @click="submitClean">确认清理</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 服务配置弹窗 -->
     <el-dialog v-model="cfgDialog" title="修改服务配置（service.json）" width="820px"
@@ -352,6 +378,49 @@ async function submit(action) {
   }
 }
 
+// ---------------------------------------------------------------- 清理 ----
+const cleanDialog = ref(false)
+const cleanDirs = ref({})      // node -> [dirs]（当前 + 历史）
+const extraPaths = ref('')
+
+async function openClean() {
+  if (!selectedNodes.value.length) {
+    ElMessage.warning('请先勾选目标节点')
+    return
+  }
+  try {
+    const h = await api.serviceHistory(name.value)
+    const merged = {}
+    for (const n of selectedNodes.value) {
+      merged[n] = [...new Set([h.current, ...(h.history[n] || [])])]
+    }
+    cleanDirs.value = merged
+    extraPaths.value = ''
+    cleanDialog.value = true
+  } catch (e) {
+    ElMessage.error(`获取部署历史失败: ${e.message}`)
+  }
+}
+
+async function submitClean() {
+  const paths = extraPaths.value.split('\n').map((s) => s.trim()).filter(Boolean)
+  const listing = Object.entries(cleanDirs.value)
+    .map(([n, dirs]) => `${n}: ${dirs.join('、')}`).join('；')
+  try {
+    await ElMessageBox.confirm(
+      `确定清理？${listing}${paths.length ? `；补录: ${paths.join('、')}` : ''}`,
+      '清理确认', { type: 'warning' })
+  } catch { return }
+  try {
+    const task = await api.createTask({ service: name.value, action: 'clean', nodes: selectedNodes.value, paths })
+    trackTask(task.id, `清理 ${name.value}`)
+    ElMessage.success(`清理任务已提交（${task.id}）`)
+    cleanDialog.value = false
+  } catch (e) {
+    ElMessage.error(`创建任务失败: ${e.message}`)
+  }
+}
+
 // ---------------------------------------------------------------- 运行实例
 const instances = ref([])
 const instLoading = ref(false)
@@ -400,7 +469,8 @@ async function submitInstOp(action, nodeList) {
   try {
     const task = await api.createTask({ service: name.value, action, nodes: nodeList })
     trackTask(task.id, `${ACTION_TEXT[action]}实例 ${name.value}`)
-    ElMessage.success(`${ACTION_TEXT[action]}任务已提交（${task.id}）`)
+    ElMessage.success(
+      `${ACTION_TEXT[action]}任务已提交（${task.id}）` + (action === 'delete' ? '；如需清理节点文件请使用「清理」' : ''))
     instTable.value?.clearSelection()
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)
@@ -460,6 +530,10 @@ onDeactivated(() => clearInterval(timer))
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
 .actions .auto-start { margin-left: 20px; margin-right: 4px; }
+.clean-node { margin-bottom: 10px; }
+.clean-node-name { font-weight: 600; margin-bottom: 4px; }
+.clean-dir { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 12px; }
+.clean-dir-path { font-family: Consolas, monospace; font-size: 13px; word-break: break-all; }
 .node-select .select-all-btn { margin-left: 24px; }
 .dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .dialog-footer .dirty-hint { margin-right: auto; }

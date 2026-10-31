@@ -22,7 +22,10 @@ def make_manager(tmp_path: Path) -> TaskManager:
     (d / "start.sh").write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
     registry = InstanceRegistry(tmp_path)
-    return TaskManager(pool=None, store=store, instances=registry, data_dir=tmp_path)
+    from backend.deploy_history import DeployHistory
+    history = DeployHistory(tmp_path)
+    return TaskManager(pool=None, store=store, instances=registry,
+                       data_dir=tmp_path, history=history)
 
 
 def test_actions_set():

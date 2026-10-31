@@ -13,7 +13,8 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from . import executor
-from .config import ACTIONS, ENV_NAME_RE, ConfigStore, Node, ServiceConfig
+from .config import ACTIONS, ENV_NAME_RE, WORKSPACE_RE, ConfigStore, Node, ServiceConfig
+from .deploy_history import DeployHistory
 from .deployer import deploy_service
 from .instances import InstanceRegistry
 from .ssh import SSHPool
@@ -43,6 +44,7 @@ class Task(BaseModel):
     nodes: list[str]
     variables: dict[str, str] = Field(default_factory=dict)
     auto_start: bool = True  # create 动作：创建后是否立即启动
+    paths: list[str] = Field(default_factory=list)  # clean 动作：补录的待清理目录
     status: str = "running"  # running | completed | partial | failed
     run_id: Optional[str] = None
     created_at: float = Field(default_factory=time.time)
@@ -81,11 +83,12 @@ def _not_running_message(st, inst) -> str:
 
 
 class TaskManager:
-    def __init__(self, pool: SSHPool, store: ConfigStore,
-                 instances: InstanceRegistry, data_dir: Path) -> None:
+    def __init__(self, pool: SSHPool, store: ConfigStore, instances: InstanceRegistry,
+                 data_dir: Path, history: DeployHistory) -> None:
         self.pool = pool
         self.store = store
         self.instances = instances
+        self.history = history
         self._file = data_dir / "tasks.json"
         self._tasks: list[Task] = []  # 新的在前
         self._used_run_ids: set[str] = set()
@@ -167,16 +170,25 @@ class TaskManager:
 
     async def create(self, service_name: str, action: str, nodes: list[str],
                      variables: dict[str, str] | None = None,
-                     auto_start: bool = True) -> Task:
+                     auto_start: bool = True,
+                     paths: list[str] | None = None) -> Task:
         service, resolved_nodes, merged_vars = self.validate(
             service_name, action, nodes, variables or {})
+        clean_paths: list[str] = []
+        if action == "clean":
+            for p in (paths or [])[:16]:
+                p = p.strip()
+                if not WORKSPACE_RE.match(p):
+                    raise TaskError(f"补录路径非法: {p!r}（须为绝对路径或 ~/ 开头，仅字母数字._-/）")
+                clean_paths.append(p)
         task = Task(
             id=uuid.uuid4().hex[:12],
             service=service_name,
             action=action,
             nodes=list(nodes),
-            variables={} if action in ("stop", "delete") else merged_vars,
+            variables={} if action in ("stop", "delete", "clean") else merged_vars,
             auto_start=auto_start,
+            paths=clean_paths,
             run_id=self.new_run_id() if action == "create" else None,
             subtasks=[SubTask(node=n.name) for n in resolved_nodes],
         )
@@ -224,6 +236,7 @@ class TaskManager:
                 n = await deploy_service(self.pool, node, service)
                 sub.uploaded = n
                 sub.detail = f"已下发 {n} 个文件 → {service.workspace}"
+                self._record_ws(service, node_name)
 
             elif task.action == "create":
                 async with self._start_lock(service.name, node_name):
@@ -240,6 +253,7 @@ class TaskManager:
                     self.instances.create(service.name, node_name, task.run_id,
                                           service.log_path(task.run_id))
                     await executor.create_dirs(self.pool, node, service, task.run_id)
+                    self._record_ws(service, node_name)
                     sub.run_id = task.run_id
                     sub.log_path = service.log_path(task.run_id)
                     sub.detail = f"实例已创建（run_id {task.run_id}）"
@@ -302,6 +316,23 @@ class TaskManager:
                         sub.detail = f"实例未在运行（{st.state}），直接删除（跳过 stop.sh）"
                     self.instances.unregister(service.name, node_name)
 
+            elif task.action == "clean":
+                # 服务级清理：仅当该节点不存在实例时允许（运行/停止/已退出均算存在）
+                existing = self.instances.get(service.name, node_name)
+                if existing is not None:
+                    raise executor.ExecError(
+                        f"节点 {node_name} 存在服务 {service.name} 的实例"
+                        f"（run_id {existing.run_id}），请先「删除」实例后再清理")
+                dirs = list(dict.fromkeys(
+                    self.history.dirs_for(service.name, [node_name]).get(node_name, [])
+                    + [service.workspace] + task.paths))
+                out = await executor.clean_dirs(self.pool, node, service, dirs)
+                sub.detail = out
+                for d in dirs:
+                    self.history.remove(service.name, node_name, d)
+                # 防御性注销（正常情况下无可注销对象）
+                self.instances.unregister(service.name, node_name)
+
             sub.status = "success"
         except Exception as e:  # noqa: BLE001
             sub.status = "failed"
@@ -312,10 +343,15 @@ class TaskManager:
             self._persist()
 
     # ------------------------------------------------------ 生命周期辅助 ----
+    def _record_ws(self, service: ServiceConfig, node_name: str) -> None:
+        """登记部署历史：记录该 (服务, 节点) 使用过的 workspace（换目录后旧目录仍可被清理）。"""
+        self.history.record(service.name, node_name, service.workspace)
+
     async def _launch(self, task: Task, service: ServiceConfig, node: Node,
                       node_name: str, sub: SubTask, run_id: str) -> None:
         """部署 + 分隔符 + 续写启动，并更新实例记录。"""
         info = await executor.start_service(self.pool, node, service, run_id, task.variables)
+        self._record_ws(service, node_name)
         sub.pid = info["pid"]
         sub.run_id = run_id
         sub.log_path = info["log_path"]

@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from ..config import (TOKEN_RE, ConfigStore, ServiceConfig,
                       save_service_json, validate_service_dir)
-from ..deps import get_store
+from ..deps import get_history, get_store
+from ..deploy_history import DeployHistory
 
 log = logging.getLogger("sd.services")
 
@@ -45,6 +46,17 @@ async def get_service(name: str, store: ConfigStore = Depends(get_store)):
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     return svc.model_dump(exclude={"service_dir"})
+
+
+@router.get("/{name}/history")
+async def service_history(name: str, store: ConfigStore = Depends(get_store),
+                          history: DeployHistory = Depends(get_history)):
+    """该服务在各节点部署过的全部 workspace（当前 + 历史），供清理操作展示。"""
+    try:
+        svc = store.service(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return {"current": svc.workspace, "history": history.dirs_for(svc.name)}
 
 
 def _load_raw(service: ServiceConfig) -> dict:

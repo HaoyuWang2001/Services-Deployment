@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .config import ConfigStore
 from .context import ctx
+from .deploy_history import DeployHistory
 from .instances import InstanceRegistry
 from .monitors import MonitorStore
 from .ssh import SSHPool
@@ -32,3 +33,8 @@ def get_tasks() -> TaskManager:
 def get_monitors() -> MonitorStore:
     assert ctx.monitors is not None
     return ctx.monitors
+
+
+def get_history() -> DeployHistory:
+    assert ctx.history is not None
+    return ctx.history

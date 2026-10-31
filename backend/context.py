@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .config import ConfigStore
+from .deploy_history import DeployHistory
 from .instances import InstanceRegistry
 from .monitors import MonitorStore
 from .ssh import SSHPool
@@ -16,6 +17,7 @@ class AppContext:
     instances: Optional[InstanceRegistry] = None
     task_manager: Optional[TaskManager] = None
     monitors: Optional[MonitorStore] = None
+    history: Optional[DeployHistory] = None
 
 
 ctx = AppContext()

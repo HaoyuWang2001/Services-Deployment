@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import DATA_DIR, ConfigStore
 from .context import ctx
+from .deploy_history import DeployHistory
 from .instances import InstanceRegistry
 from .monitors import MonitorStore
 from .routers import cluster, instances, logs, monitors, services, tasks
@@ -52,18 +53,21 @@ async def lifespan(app: FastAPI):
     store = ConfigStore()
     pool = SSHPool()
     registry = InstanceRegistry(DATA_DIR)
-    task_manager = TaskManager(pool, store, registry, DATA_DIR)
+    history = DeployHistory(DATA_DIR)
+    task_manager = TaskManager(pool, store, registry, DATA_DIR, history)
     monitors = MonitorStore(DATA_DIR)
     app.state.store = store
     app.state.pool = pool
     app.state.instances = registry
     app.state.task_manager = task_manager
     app.state.monitors = monitors
+    app.state.history = history
     ctx.store = store
     ctx.pool = pool
     ctx.instances = registry
     ctx.task_manager = task_manager
     ctx.monitors = monitors
+    ctx.history = history
     yield
     await pool.close_all()
 

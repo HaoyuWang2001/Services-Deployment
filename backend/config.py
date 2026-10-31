@@ -26,7 +26,7 @@ REL_PATH_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
 WORKSPACE_RE = re.compile(r"^(?:~(?:/[A-Za-z0-9._-]+)*/?|/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?)$")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-ACTIONS = ("deploy", "create", "start", "stop", "restart", "delete")
+ACTIONS = ("deploy", "create", "start", "stop", "restart", "delete", "clean")
 
 
 # ---------------------------------------------------------------- cluster ----

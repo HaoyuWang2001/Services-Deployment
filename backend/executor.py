@@ -140,6 +140,48 @@ def build_stop_script_command(service: ServiceConfig) -> str:
     return f"cd {ws} && bash {shlex.quote(service.stop.script)}"
 
 
+def build_clean_command(service: ServiceConfig, dirs: list[str]) -> str:
+    """服务级清理命令：逐目录整删，带三重防护。
+
+    输出标记（任务详情即清理日志）：
+      $ rm -rf -- <dir>    执行回显
+      cleaned <dir>        已删除
+      MISSING <dir>        目录不存在（视为已清理）
+      SKIP <dir> ...       缺少 logs//run/ 系统标记，疑似非本系统目录（拒绝）
+      REFUSE <dir> ...     残留 pid 文件且进程/组仍存活（拒绝）
+    """
+    entries = []
+    for d in dirs:
+        ref = shell_ws(d)
+        pidfile = f"{ref}/run/{service.name}.pid"
+        rm = f'echo "\\$ rm -rf -- {d}"; rm -rf -- {ref} && echo "cleaned {d}"'
+        entries.append(
+            f'if [ ! -d {ref} ]; then echo "MISSING {d}"; '
+            f'elif [ ! -d {ref}/logs ] || [ ! -d {ref}/run ]; then '
+            f'echo "SKIP {d} 缺少 logs/run 标记，疑似非本系统目录"; '
+            f'elif [ -f {pidfile} ]; then '
+            f'read -r cpid _ < {pidfile}; '
+            f'if kill -0 $cpid 2>/dev/null || kill -0 -- -$cpid 2>/dev/null; then '
+            f'echo "REFUSE {d} 仍有存活进程 PID $cpid，请先停止或删除实例"; '
+            f'else {rm}; fi; '
+            f'else {rm}; fi'
+        )
+    return "; ".join(entries) + "; true"
+
+
+async def clean_dirs(pool: SSHPool, node: Node, service: ServiceConfig,
+                     dirs: list[str]) -> str:
+    """执行清理；出现 SKIP/REFUSE 时如实失败（已删的保持已删）。"""
+    res = await pool.run(node, build_clean_command(service, dirs), timeout=120)
+    out = res.stdout.strip()
+    bad = [line for line in out.splitlines() if line.startswith(("SKIP", "REFUSE"))]
+    if bad:
+        raise ExecError("清理未完全成功: " + "; ".join(bad)[:400])
+    if not res.ok:
+        raise ExecError(f"清理命令失败(exit={res.exit_code}): {(res.stderr or '').strip()[:300]}")
+    return out or "无目录需要清理"
+
+
 def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -> str:
     """探活命令；run_id 提供时，已退出实例附带 exit_code 文件中的退出码（无文件为 -）。"""
     ws = shell_ws(service.workspace)

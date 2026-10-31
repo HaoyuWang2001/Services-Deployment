@@ -99,9 +99,11 @@ python -m backend.main --host 127.0.0.1 --port 8310
 | 停止（仅限运行中） | **系统先整组终止进程**（指纹校验+组杀，无需也不应在 stop.sh 里 kill），成功后执行 stop.sh 应用清理；实例保留 |
 | 重启（仅限运行中） | 整组终止 → stop.sh 清理 → 重新启动，同一日志文件**续写** |
 | 删除 | 运行中：整组终止 → stop.sh → 移除；非运行中：直接移除（不再执行 stop.sh）。节点上的文件与历史日志保留 |
+| 清理（服务级） | **仅当节点上不存在实例时允许**（请先删除实例）：整目录删除该服务在各节点部署过的全部 workspace（含历史目录与日志），恢复节点至部署前。每目录三重防护：无 `logs//run/` 系统标记 → `SKIP` 拒删；残留 pid 且进程存活 → `REFUSE`；不存在 → `MISSING` 视为已清理。命令与结果记录于任务详情（即清理日志），支持补录部署历史之外的旧目录 |
 
 - **stop.sh 只做应用层清理**（如拆除集群）：手动停止时在进程终止后执行；start.sh **自然退出（含非零退出）后自动执行**完成清理（被停止/杀死的路径不触发自动执行）
 - 已停止/已退出的实例执行停止或重启会被拒绝并给出引导（请直接「启动」或「删除」）
+- **部署历史**：系统记录每个 (服务, 节点) 部署过的全部 workspace（`data/deploy_history.json`），更换目录后旧目录仍会被「清理」覆盖——`GET /api/services/<名称>/history` 可查
 - 停止/重启/删除与自动清理的过程全部写入实例日志（`停止实例` / `自动清理 (stop.sh)` 分隔符 + `$ kill` / `$ bash stop.sh` 执行提示行 + 输出）
 
 **日志续写**：同一实例多次启动共用 `logs/<run_id>/<日志文件>`，每次启动前写入分隔符行 `===== [时间] 实例启动 =====`；退出码记录于 `exit_code`（最近一次）与 `exit_codes.log`（历史，时间+码）。适合运行至完成的任务（如编译）：实例状态直接给出退出码。
@@ -175,6 +177,11 @@ curl -s $BASE/api/tasks/<task_id>
 # 已停止/已退出的实例执行停止或重启会被拒绝（400 任务子任务失败并给出引导）
 curl -s -X POST $BASE/api/tasks -H 'Content-Type: application/json' \
   -d '{"service":"etcd","action":"stop","nodes":["node4"]}'
+
+# 清理（服务级，需先删除实例）：整目录删除全部部署目录（含历史），可补录旧路径
+curl -s $BASE/api/services/etcd/history
+curl -s -X POST $BASE/api/tasks -H 'Content-Type: application/json' \
+  -d '{"service":"etcd","action":"clean","nodes":["node4"],"paths":["/data/old-workspace"]}'
 
 # 运行实例与探活状态
 curl -s $BASE/api/instances

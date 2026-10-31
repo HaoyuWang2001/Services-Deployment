@@ -24,6 +24,7 @@ export const api = {
   deleteMonitor: (id) => request('DELETE', `/api/monitors/${id}`),
   services: () => request('GET', '/api/services'),
   service: (name) => request('GET', `/api/services/${encodeURIComponent(name)}`),
+  serviceHistory: (name) => request('GET', `/api/services/${encodeURIComponent(name)}/history`),
   createService: (name) => request('POST', '/api/services', { name }),
   reloadServices: () => request('POST', '/api/services/reload'),
   updateService: (name, payload) =>

@@ -200,7 +200,9 @@ def test_task_validate_nodes_whitelist_and_hidden(tmp_path):
     for name, extra in [("etcd", {"nodes": ["node4"]}), ("tmpl", {"hidden": True})]:
         _svc_dir(svc_dir, name, {"name": name, "workspace": f"/data/{name}", **extra})
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
-    tm = TaskManager(pool=None, store=store, instances=None, data_dir=tmp_path)
+    from backend.deploy_history import DeployHistory
+    tm = TaskManager(pool=None, store=store, instances=None,
+                     data_dir=tmp_path, history=DeployHistory(tmp_path))
 
     svc, nodes, _ = tm.validate("etcd", "start", ["node4"], {})
     assert [n.name for n in nodes] == ["node4"]
