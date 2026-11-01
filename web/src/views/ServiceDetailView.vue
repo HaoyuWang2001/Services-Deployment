@@ -79,15 +79,15 @@
           </div>
           <div class="inst-actions">
             <el-button size="small" type="success" plain
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('start')">
+                       :disabled="!canStartInsts || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="warning" plain
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('stop')">
+                       :disabled="!canStopInsts || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger"
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('delete')">
+                       :disabled="!canDeleteInsts || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
             <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -246,7 +246,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
 import {
-  ABNORMAL_HINT, cleanupText, cleanupType, isEligible, statusText, statusType,
+  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  cleanupText, cleanupType, statusText, statusType,
 } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
@@ -485,6 +486,13 @@ async function loadInstances(silent = false) {
 }
 
 // ---------------------------------------------------------------- 实例批量预检 ----
+// 严格全部门禁：全部选中实例符合该动作允许状态才可点击（叠加 dirty）
+const everyInstIn = (set) => computed(() =>
+  selectedInsts.value.length > 0 && selectedInsts.value.every((r) => set.includes(r.status)))
+const canStartInsts = everyInstIn(STARTABLE)
+const canStopInsts = everyInstIn(STOPPABLE)
+const canDeleteInsts = everyInstIn(DELETABLE)
+
 function setTimer() {
   clearInterval(timer)
   if (autoRefresh.value) timer = setInterval(() => loadInstances(true), 10000)
@@ -512,7 +520,7 @@ async function batchInstanceOp(action) {
     const live = byNode.get(row.node)
     const status = live?.status ?? row.status
     return { node: row.node, status, exit_code: live?.exit_code ?? row.exit_code,
-             eligible: isEligible(action, status) }
+             eligible: ({ start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }[action] || []).includes(status) }
   })
   instBatchChecking.value = false
 }

@@ -336,7 +336,8 @@ class TaskManager:
                     sub.log_path = inst.log_path
 
             elif task.action == "delete":
-                # 状态机：仅 created / stopped / completed / notdeployed 可删除
+                # 状态机：created/stopped/completed/notdeployed 直接删除；
+                # running = 链接「停止→删除」，停止必须正常完成否则中止删除；abnormal 拒绝（先停止归一）
                 async with self._start_lock(service.name, node_name):
                     inst = self.instances.get(service.name, node_name)
                     if inst is None:
@@ -350,15 +351,37 @@ class TaskManager:
                         if display not in CAN_DELETE:
                             raise executor.ExecError(
                                 f"当前状态不允许删除；{_state_guidance(display, st, inst)}")
-                        prev = inst.state
-                        self.instances.set_state(service.name, node_name, "deleting")
-                        try:
+                        if display == "running":
+                            # 链接停止：完整停止管线（组杀 + stop.sh + 日志）
+                            self.instances.set_state(service.name, node_name, "stopping")
+                            try:
+                                out = await executor.stop_service(
+                                    self.pool, node, service, run_id=inst.run_id)
+                            except executor.ExecError as e:
+                                msg = str(e)
+                                if "stop.sh 失败" in msg:
+                                    m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
+                                    code = m.group(1) if m else "?"
+                                    self.instances.set_stop_result(
+                                        service.name, node_name, f"failed:{code}")
+                                else:
+                                    self.instances.set_stop_result(
+                                        service.name, node_name, "killfail")
+                                st2 = await executor.service_status(
+                                    self.pool, node, service, inst.run_id)
+                                self.instances.set_state(
+                                    service.name, node_name,
+                                    "running" if st2.state == "running" else "exited")
+                                raise  # 停止未正常结束：中止删除，实例保留可重试
+                            self.instances.set_stop_result(service.name, node_name, "ok")
+                            self.instances.set_state(service.name, node_name, "deleting")
+                            sub.detail = (out or "") + "；停止完成，实例已删除"
+                            self.instances.unregister(service.name, node_name)
+                        else:
+                            self.instances.set_state(service.name, node_name, "deleting")
                             # 可删除态均无需停止进程/清理（已停止或从未运行）
                             sub.detail = f"实例已删除（状态 {display}；节点文件保留，可用「清理」移除）"
                             self.instances.unregister(service.name, node_name)
-                        except Exception:
-                            self.instances.set_state(service.name, node_name, prev)
-                            raise
 
             elif task.action == "clean":
                 # 服务级清理：仅当该节点不存在实例时允许（运行/停止/已退出均算存在）

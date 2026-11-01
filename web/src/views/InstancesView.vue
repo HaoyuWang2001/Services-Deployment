@@ -9,13 +9,13 @@
           </el-tooltip>
         </div>
         <div class="inst-actions">
-          <el-button size="small" type="success" plain :disabled="!selected.length" @click="openBatch('start')">
+          <el-button size="small" type="success" plain :disabled="!canStart" @click="openBatch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!selected.length" @click="openBatch('stop')">
+          <el-button size="small" type="warning" plain :disabled="!canStop" @click="openBatch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="danger" :disabled="!selected.length" @click="openBatch('delete')">
+          <el-button size="small" type="danger" :disabled="!canDelete" @click="openBatch('delete')">
             删除选中 ({{ selected.length }})
           </el-button>
           <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -97,7 +97,8 @@ import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTaskGroup } from '../taskNotify'
 import {
-  ABNORMAL_HINT, cleanupText, cleanupType, isEligible, statusText, statusType,
+  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  cleanupText, cleanupType, statusText, statusType,
 } from '../instanceStatus'
 
 const router = useRouter()
@@ -122,6 +123,13 @@ async function load(silent = false) {
     if (!silent) loading.value = false
   }
 }
+
+// 严格全部门禁：全部选中实例符合该动作允许状态才可点击
+const everyIn = (set) => computed(() =>
+  selected.value.length > 0 && selected.value.every((r) => set.includes(r.status)))
+const canStart = everyIn(STARTABLE)
+const canStop = everyIn(STOPPABLE)
+const canDelete = everyIn(DELETABLE)
 
 function setTimer() {
   clearInterval(timer)
@@ -161,7 +169,7 @@ async function openBatch(action) {
       status,
       cleanup_status: live?.cleanup_status ?? row.cleanup_status,
       exit_code: live?.exit_code ?? row.exit_code,
-      eligible: isEligible(action, status),
+      eligible: ({ start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }[action] || []).includes(status),
     }
   })
   batchChecking.value = false

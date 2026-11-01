@@ -52,7 +52,9 @@ def test_reconcile_nopidfile_probe():
 def test_gating_sets():
     assert set(CAN_STOP) == {"running", "abnormal", "completed"}
     assert set(CAN_START) == {"created", "stopped", "completed", "notdeployed"}
-    assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed"}
+    # running 允许删除（链接 停止→删除）；abnormal 不允许（须先停止归一）
+    assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed", "running"}
+    assert "abnormal" not in CAN_DELETE
     for t in TRANSIENT_STATES:
         assert t not in CAN_STOP and t not in CAN_START and t not in CAN_DELETE
 
