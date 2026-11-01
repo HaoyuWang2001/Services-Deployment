@@ -69,3 +69,9 @@ export function cleanupText(c) {
 export const STOPPABLE = ['running', 'abnormal', 'completed']
 export const STARTABLE = ['created', 'stopped', 'completed', 'notdeployed']
 export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed']
+
+const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+
+export function isEligible(action, status) {
+  return (ELIGIBLE_SETS[action] || []).includes(status)
+}

@@ -9,13 +9,13 @@
           </el-tooltip>
         </div>
         <div class="inst-actions">
-          <el-button size="small" type="success" plain :disabled="!canStart" @click="batch('start')">
+          <el-button size="small" type="success" plain :disabled="!selected.length" @click="openBatch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!canStop" @click="batch('stop')">
+          <el-button size="small" type="warning" plain :disabled="!selected.length" @click="openBatch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="danger" :disabled="!canDelete" @click="batch('delete')">
+          <el-button size="small" type="danger" :disabled="!selected.length" @click="openBatch('delete')">
             删除选中 ({{ selected.length }})
           </el-button>
           <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -54,19 +54,50 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 批量操作预检确认框 -->
+    <el-dialog v-model="batchDialog" :title="`${ACTION_TEXT[batchAction]}确认（实时状态预检）`" width="620px">
+      <el-table :data="batchTargets" size="small" v-loading="batchChecking">
+              empty-text="无选中的实例">
+        <el-table-column label="实例" min-width="200">
+          <template #default="{ row }">
+            <span class="mono">{{ row.service }}@{{ row.node }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="当前状态" width="150">
+          <template #default="{ row }">
+            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="本次" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.eligible" type="success" size="small">执行</el-tag>
+            <el-tag v-else type="info" size="small">跳过</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="batch-hint">
+        将执行 {{ eligibleTargets.length }} 个；跳过 {{ batchTargets.length - eligibleTargets.length }} 个状态不符实例（跳过项不受影响）
+      </div>
+      <template #footer>
+        <el-button @click="batchDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!eligibleTargets.length" @click="confirmBatch">
+          确认{{ ACTION_TEXT[batchAction] }}（{{ eligibleTargets.length }}）
+        </el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
-import { trackTask } from '../taskNotify'
+import { trackTaskGroup } from '../taskNotify'
 import {
-  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
-  cleanupText, cleanupType, statusText, statusType,
+  ABNORMAL_HINT, cleanupText, cleanupType, isEligible, statusText, statusType,
 } from '../instanceStatus'
 
 const router = useRouter()
@@ -76,13 +107,6 @@ const instTable = ref(null)
 const loading = ref(false)
 const autoRefresh = ref(true)
 let timer = null
-
-// 批量按钮门禁：全部选中实例处于允许状态才可用
-const everyIn = (set) => computed(() =>
-  selected.value.length > 0 && selected.value.every((r) => set.includes(r.status)))
-const canStart = everyIn(STARTABLE)
-const canStop = everyIn(STOPPABLE)
-const canDelete = everyIn(DELETABLE)
 
 async function load(silent = false) {
   if (!silent) loading.value = true
@@ -104,49 +128,75 @@ function setTimer() {
   if (autoRefresh.value) timer = setInterval(() => load(true), 10000)
 }
 
-
 function viewLog(row) {
   router.push({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
 }
 
+// ---------------------------------------------------------------- 批量预检 ----
+const batchDialog = ref(false)
+const batchAction = ref('stop')
+const batchTargets = ref([])       // {service, node, status, cleanup_status, exit_code, eligible}
+const batchChecking = ref(false)
+
+const eligibleTargets = computed(() => batchTargets.value.filter((t) => t.eligible))
+
+async function openBatch(action) {
+  if (!selected.value.length) return
+  batchAction.value = action
+  batchDialog.value = true
+  batchChecking.value = true
+  // 拉取实时状态（失败时回退使用当前表格状态）
+  let fresh = null
+  try {
+    fresh = await api.instances()
+  } catch { /* 使用表格快照 */ }
+  const byKey = new Map((fresh?.instances || []).map((i) => [`${i.service}:${i.node}`, i]))
+  batchTargets.value = selected.value.map((row) => {
+    const live = byKey.get(row.key)
+    const status = live?.status ?? row.status
+    return {
+      service: row.service,
+      node: row.node,
+      run_id: live?.run_id ?? row.run_id,
+      status,
+      cleanup_status: live?.cleanup_status ?? row.cleanup_status,
+      exit_code: live?.exit_code ?? row.exit_code,
+      eligible: isEligible(action, status),
+    }
+  })
+  batchChecking.value = false
+}
+
+async function confirmBatch() {
+  const rows = eligibleTargets.value
+  if (!rows.length) return
+  batchDialog.value = false
+  await submitGroups(batchAction.value, rows)
+}
+
 async function submitGroups(action, rows) {
-  // 按服务分组，各生成一个任务
-  const groups = new Map()
+  // 按服务分组，各生成一个任务；结果聚合并单弹窗
+  const groupsMap = new Map()
   for (const r of rows) {
-    if (!groups.has(r.service)) groups.set(r.service, [])
-    groups.get(r.service).push(r.node)
+    if (!groupsMap.has(r.service)) groupsMap.set(r.service, [])
+    groupsMap.get(r.service).push(r.node)
   }
-  let ok = 0
-  for (const [service, nodes] of groups) {
+  const submitted = []
+  for (const [service, nodes] of groupsMap) {
     try {
       const task = await api.createTask({ service, action, nodes })
-      trackTask(task.id, `${ACTION_TEXT[action]}实例 ${service}`)
-      ok += 1
+      submitted.push({ id: task.id, context: `${ACTION_TEXT[action]}实例 ${service}` })
     } catch (e) {
       ElMessage.error(`${service} ${ACTION_TEXT[action]}任务创建失败: ${e.message}`)
     }
   }
-  if (ok) ElMessage.success(`${ACTION_TEXT[action]}任务已提交（${ok} 个服务）`)
+  if (submitted.length) {
+    trackTaskGroup(submitted, `${ACTION_TEXT[action]} ${rows.length} 个实例`)
+    ElMessage.success(`已提交 ${submitted.length} 个任务（覆盖 ${rows.length} 个实例）`)
+  }
   instTable.value?.clearSelection()
   setTimeout(() => load(true), 1000)
   setTimeout(() => load(true), 4000)
-}
-
-async function confirmAction(action, targets) {
-  const desc = targets.map((t) => `${t.service}@${t.node}`).join('、')
-  const extra = { delete: '（从列表移除，节点文件保留，可用服务页「清理」移除）',
-                  stop: '（终止进程并执行 stop.sh 清理，实例保留）' }[action] || ''
-  try {
-    await ElMessageBox.confirm(
-      `确定对 ${desc} 执行「${ACTION_TEXT[action]}」${extra}？`,
-      `${ACTION_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
-  } catch { return false }
-  return true
-}
-
-async function batch(action) {
-  if (!selected.value.length) return
-  if (await confirmAction(action, selected.value)) submitGroups(action, selected.value)
 }
 
 onMounted(() => { load(); setTimer() })
@@ -159,4 +209,6 @@ onUnmounted(() => clearInterval(timer))
 .card-header { display: flex; justify-content: space-between; align-items: center; }
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
+.mono { font-family: Consolas, monospace; font-size: 13px; }
+.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
 </style>

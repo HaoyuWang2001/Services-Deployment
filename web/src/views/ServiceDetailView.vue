@@ -75,15 +75,15 @@
           </div>
           <div class="inst-actions">
             <el-button size="small" type="success" plain
-                       :disabled="!canStart || dirty" @click="batchInstanceOp('start')">
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="warning" plain
-                       :disabled="!canStop || dirty" @click="batchInstanceOp('stop')">
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger"
-                       :disabled="!canDelete || dirty" @click="batchInstanceOp('delete')">
+                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
             <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -121,6 +121,36 @@
         </el-table-column>
       </el-table>
     </el-card>
+
+    <!-- 实例批量预检确认框 -->
+    <el-dialog v-model="instBatchDialog" :title="`${ACTION_TEXT[instBatchAction]}确认（实时状态预检）`" width="560px">
+      <el-table :data="instBatchTargets" size="small" v-loading="instBatchChecking">
+        <el-table-column prop="node" label="节点" min-width="140" />
+        <el-table-column label="当前状态" width="150">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
+              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="本次" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.eligible" type="success" size="small">执行</el-tag>
+            <el-tag v-else type="info" size="small">跳过</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="batch-hint">
+        将执行 {{ instBatchEligible.length }} 个；跳过 {{ instBatchTargets.length - instBatchEligible.length }} 个状态不符实例（跳过项不受影响）
+      </div>
+      <template #footer>
+        <el-button @click="instBatchDialog = false">取消</el-button>
+        <el-button type="primary" :disabled="!instBatchEligible.length" @click="confirmInstBatch">
+          确认{{ ACTION_TEXT[instBatchAction] }}（{{ instBatchEligible.length }}）
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 清理对话框 -->
     <el-dialog v-model="cleanDialog" title="清理服务文件" width="680px">
@@ -212,8 +242,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
 import {
-  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
-  cleanupText, cleanupType, statusText, statusType,
+  ABNORMAL_HINT, cleanupText, cleanupType, isEligible, statusText, statusType,
 } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
@@ -451,47 +480,56 @@ async function loadInstances(silent = false) {
   finally { if (!silent) instLoading.value = false }
 }
 
-// 批量按钮门禁：全部选中实例处于允许状态才可用（叠加 dirty 禁用）
-const everyInstIn = (set) => computed(() =>
-  selectedInsts.value.length > 0 && selectedInsts.value.every((r) => set.includes(r.status)))
-const canStart = everyInstIn(STARTABLE)
-const canStop = everyInstIn(STOPPABLE)
-const canDelete = everyInstIn(DELETABLE)
-
+// ---------------------------------------------------------------- 实例批量预检 ----
 function setTimer() {
   clearInterval(timer)
   if (autoRefresh.value) timer = setInterval(() => loadInstances(true), 10000)
 }
 
-async function confirmInstOp(action, nodeList) {
-  const extra = { delete: '（从列表移除，节点文件保留，可用「清理」移除）',
-                  stop: '（终止进程并执行 stop.sh 清理，实例保留）' }[action] || ''
+const instBatchDialog = ref(false)
+const instBatchAction = ref('stop')
+const instBatchTargets = ref([])   // {node, status, eligible}
+const instBatchChecking = ref(false)
+const instBatchEligible = computed(() => instBatchTargets.value.filter((t) => t.eligible))
+
+async function batchInstanceOp(action) {
+  if (!selectedInsts.value.length || dirty.value) return
+  instBatchAction.value = action
+  instBatchDialog.value = true
+  instBatchChecking.value = true
+  // 拉取实时状态（失败回退表格快照）
+  let fresh = null
   try {
-    await ElMessageBox.confirm(
-      `确定${ACTION_TEXT[action]} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）${extra}？`,
-      `${ACTION_TEXT[action]}确认`, { type: action === 'start' ? 'info' : 'warning' })
-  } catch { return false }
-  return true
+    fresh = await api.instances()
+  } catch { /* 使用表格快照 */ }
+  const byNode = new Map(
+    (fresh?.instances || []).filter((i) => i.service === name.value).map((i) => [i.node, i]))
+  instBatchTargets.value = selectedInsts.value.map((row) => {
+    const live = byNode.get(row.node)
+    const status = live?.status ?? row.status
+    return { node: row.node, status, exit_code: live?.exit_code ?? row.exit_code,
+             eligible: isEligible(action, status) }
+  })
+  instBatchChecking.value = false
 }
 
-async function submitInstOp(action, nodeList) {
+async function confirmInstBatch() {
+  const rows = instBatchEligible.value
+  if (!rows.length) return
+  instBatchDialog.value = false
+  const nodeList = rows.map((r) => r.node)
   try {
-    const task = await api.createTask({ service: name.value, action, nodes: nodeList })
-    trackTask(task.id, `${ACTION_TEXT[action]}实例 ${name.value}`)
+    const task = await api.createTask({ service: name.value, action: instBatchAction.value, nodes: nodeList })
+    trackTask(task.id, `${ACTION_TEXT[instBatchAction.value]}实例 ${name.value}（${nodeList.length} 节点）`)
     ElMessage.success(
-      `${ACTION_TEXT[action]}任务已提交（${task.id}）` + (action === 'delete' ? '；如需清理节点文件请使用「清理」' : ''))
+      `${ACTION_TEXT[instBatchAction.value]}任务已提交（${task.id}）`
+      + (instBatchAction.value === 'delete' ? '；如需清理节点文件请使用「清理」' : ''))
     instTable.value?.clearSelection()
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)
   } catch (e) {
     ElMessage.error(`创建任务失败: ${e.message}`)
   }
-}
-
-async function batchInstanceOp(action) {
-  const nodeList = selectedInsts.value.map((r) => r.node)
-  if (!nodeList.length) return
-  if (await confirmInstOp(action, nodeList)) submitInstOp(action, nodeList)
 }
 
 function viewLog(row) {
@@ -538,6 +576,7 @@ onDeactivated(() => clearInterval(timer))
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
+.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
 .actions .auto-start { margin-left: 20px; margin-right: 4px; }
 .clean-node { margin-bottom: 10px; }
 .clean-node-name { font-weight: 600; margin-bottom: 4px; }
