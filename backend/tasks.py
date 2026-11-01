@@ -1,8 +1,9 @@
-"""任务管理：一次操作（deploy/start/stop/restart）在 N 个节点上并发执行。"""
+"""任务管理：一次操作（deploy/create/start/stop/delete/clean）在 N 个节点上并发执行。"""
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 import uuid
@@ -64,22 +65,31 @@ class TaskError(ValueError):
     pass
 
 
-def _not_running_message(st, inst) -> str:
-    """停止/重启前置校验失败时的引导信息。"""
-    if st.state == "dead":
-        if inst is not None and inst.stopped:
-            return "实例已停止，无需停止；可「启动」或「删除」"
-        code = f"(码={st.exit_code})" if st.exit_code is not None else ""
-        return f"实例已退出{code}，无需停止；可「启动」或「删除」"
-    if st.state == "nopidfile":
-        return "实例未运行（尚未启动）"
-    if st.state == "nows":
-        return "服务未部署到该节点"
-    if st.state == "legacy":
-        return f"存在旧格式运行实例(PID {st.pid})，请按提示手动处理后再操作"
-    if st.state == "reused":
+def _state_guidance(display: str, st=None, inst=None) -> str:
+    """按展示状态给出操作引导信息。"""
+    if display == "running":
+        return "实例运行中（如为重复启动请先停止）"
+    if display in ("starting", "stopping", "deleting"):
+        return f"操作进行中（{display}），请等待完成后重试"
+    if display == "stopped":
+        return "实例已停止，无需停止；可直接「启动」或「删除」"
+    if display == "completed":
+        return f"实例已完成(0){'，退出码 ' + str(st.exit_code) if st and st.exit_code is not None else ''}；可直接「启动」或「删除」，或「停止」重跑清理"
+    if display == "abnormal":
+        code = ""
+        if st is not None and st.exit_code is not None:
+            code = f"(码={st.exit_code})"
+        return (f"实例处于异常态{code}，进程已异常退出且不会自动清理；"
+                "请先执行「停止」进入已停止状态，再启动或删除")
+    if display == "created":
+        return "实例未启动（尚未运行过），无需停止；可直接「启动」或「删除」"
+    if display == "notdeployed":
+        return "节点上未找到部署目录（workspace 缺失）；可直接「启动」（将重新部署）或「删除」"
+    if display == "legacy":
+        return f"存在旧格式运行实例(PID {st.pid if st else '?'})，请按提示手动处理"
+    if display == "reused":
         return "PID 已被其他进程复用，无法安全操作；可「删除」实例"
-    return f"实例状态异常({st.state})"
+    return f"实例状态异常({display})"
 
 
 class TaskManager:
@@ -262,59 +272,93 @@ class TaskManager:
 
             elif task.action == "start":
                 async with self._start_lock(service.name, node_name):
-                    run_id = self._ensure_instance(task, service, node_name)
-                    await self._check_duplicate(service, node, node_name)
-                    await self._launch(task, service, node, node_name, sub, run_id)
-
-            elif task.action == "restart":
-                # 仅限运行中实例：系统组杀 → stop.sh 清理 → 重新启动（同 run_id 续写）
-                async with self._start_lock(service.name, node_name):
                     inst = self.instances.get(service.name, node_name)
-                    run_id = inst.run_id if inst else None
-                    st = await executor.service_status(self.pool, node, service, run_id)
-                    if st.state != "running":
-                        raise executor.ExecError(
-                            f"实例不在运行中，无需重启；{_not_running_message(st, inst)}")
-                    await executor.stop_service(self.pool, node, service, run_id=run_id)
-                    await self._launch(task, service, node, node_name, sub, run_id)
+                    if inst is None:
+                        # API 兼容：实例不存在时自动创建
+                        run_id = self._ensure_instance(task, service, node_name)
+                        self.instances.set_state(service.name, node_name, "starting")
+                        try:
+                            await self._launch(task, service, node, node_name, sub, run_id)
+                        except Exception:
+                            self.instances.set_state(service.name, node_name, "created")
+                            raise
+                    else:
+                        st = await executor.service_status(self.pool, node, service, inst.run_id)
+                        from .instances import CAN_START, reconcile
+                        display = reconcile(inst.state, st.state, st.exit_code)
+                        if display not in CAN_START:
+                            raise executor.ExecError(
+                                f"当前状态不允许启动；{_state_guidance(display, st, inst)}")
+                        prev = inst.state
+                        self.instances.set_state(service.name, node_name, "starting")
+                        try:
+                            await self._launch(task, service, node, node_name, sub, inst.run_id)
+                        except Exception:
+                            self.instances.set_state(service.name, node_name, prev)
+                            raise
 
             elif task.action == "stop":
-                # 仅限运行中实例：系统组杀进程 → stop.sh 应用清理；实例保留
-                inst = self.instances.get(service.name, node_name)
-                run_id = inst.run_id if inst else None
-                st = await executor.service_status(self.pool, node, service, run_id)
-                if st.state != "running":
-                    raise executor.ExecError(_not_running_message(st, inst))
-                out = await executor.stop_service(self.pool, node, service, run_id=run_id)
-                sub.detail = out
-                sub.run_id = run_id
-                if inst is not None:
+                # 状态机：仅 running / abnormal / completed 可停止（走停止中 → 已停止）
+                async with self._start_lock(service.name, node_name):
+                    inst = self.instances.get(service.name, node_name)
+                    if inst is None:
+                        raise executor.ExecError(
+                            f"节点 {node_name} 无服务 {service.name} 的实例记录，无法停止")
+                    st = await executor.service_status(self.pool, node, service, inst.run_id)
+                    from .instances import CAN_STOP, reconcile
+                    display = reconcile(inst.state, st.state, st.exit_code)
+                    if display not in CAN_STOP:
+                        raise executor.ExecError(
+                            f"当前状态不允许停止；{_state_guidance(display, st, inst)}")
+                    run_id = inst.run_id
+                    self.instances.set_state(service.name, node_name, "stopping")
+                    try:
+                        out = await executor.stop_service(self.pool, node, service, run_id=run_id)
+                        sub.detail = out
+                        self.instances.set_state(service.name, node_name, "stopped")
+                        self.instances.set_stop_result(service.name, node_name, "ok")
+                    except executor.ExecError as e:
+                        msg = str(e)
+                        if "stop.sh 失败" in msg:
+                            m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
+                            code = m.group(1) if m else "?"
+                            self.instances.set_stop_result(
+                                service.name, node_name, f"failed:{code}")
+                        else:
+                            self.instances.set_stop_result(service.name, node_name, "killfail")
+                        # 状态回退：按探活判定（活→running，死→exited）
+                        st2 = await executor.service_status(self.pool, node, service, run_id)
+                        self.instances.set_state(
+                            service.name, node_name,
+                            "running" if st2.state == "running" else "exited")
+                        raise
+                    sub.run_id = run_id
                     sub.log_path = inst.log_path
-                self.instances.mark_stopped(service.name, node_name)
 
             elif task.action == "delete":
-                inst = self.instances.get(service.name, node_name)
-                if inst is None:
-                    sub.detail = "实例不存在（幂等成功）"
-                else:
-                    sub.run_id = inst.run_id
-                    sub.log_path = inst.log_path
-                    st = await executor.service_status(self.pool, node, service, inst.run_id)
-                    if st.state in ("running", "legacy"):
-                        # 运行中：组杀 + stop.sh 清理后注销
-                        try:
-                            out = await executor.stop_service(
-                                self.pool, node, service, run_id=inst.run_id)
-                            sub.detail = out
-                        except executor.ExecError as e:
-                            if "PIDREUSED" not in str(e):
-                                raise  # STOPFAIL / LEGACY：无法安全停止，中止删除
-                            sub.detail = f"PID 已被复用，视为无本方进程: {e}"
-                        sub.detail = (sub.detail or "") + "；实例已删除"
+                # 状态机：仅 created / stopped / completed / notdeployed 可删除
+                async with self._start_lock(service.name, node_name):
+                    inst = self.instances.get(service.name, node_name)
+                    if inst is None:
+                        sub.detail = "实例不存在（幂等成功）"
                     else:
-                        # 非运行中（已停止/已退出/未启动）：直接注销，不再执行 stop.sh
-                        sub.detail = f"实例未在运行（{st.state}），直接删除（跳过 stop.sh）"
-                    self.instances.unregister(service.name, node_name)
+                        sub.run_id = inst.run_id
+                        sub.log_path = inst.log_path
+                        st = await executor.service_status(self.pool, node, service, inst.run_id)
+                        from .instances import CAN_DELETE, reconcile
+                        display = reconcile(inst.state, st.state, st.exit_code)
+                        if display not in CAN_DELETE:
+                            raise executor.ExecError(
+                                f"当前状态不允许删除；{_state_guidance(display, st, inst)}")
+                        prev = inst.state
+                        self.instances.set_state(service.name, node_name, "deleting")
+                        try:
+                            # 可删除态均无需停止进程/清理（已停止或从未运行）
+                            sub.detail = f"实例已删除（状态 {display}；节点文件保留，可用「清理」移除）"
+                            self.instances.unregister(service.name, node_name)
+                        except Exception:
+                            self.instances.set_state(service.name, node_name, prev)
+                            raise
 
             elif task.action == "clean":
                 # 服务级清理：仅当该节点不存在实例时允许（运行/停止/已退出均算存在）
@@ -369,17 +413,3 @@ class TaskManager:
         run_id = task.run_id or self.new_run_id()
         self.instances.create(service.name, node_name, run_id, service.log_path(run_id))
         return run_id
-
-    async def _check_duplicate(self, service: ServiceConfig, node: Node, node_name: str) -> None:
-        """重复启动保护（默认开启）：已有运行实例时拒绝启动。"""
-        if service.allow_duplicate_start:
-            return
-        st = await executor.service_status(self.pool, node, service)
-        if st.state == "running":
-            raise executor.ExecError(
-                f"节点 {node_name} 已有运行中实例(PID {st.pid})，禁止重复启动；"
-                "请先停止该实例或使用「重启」")
-        if st.state == "legacy":
-            raise executor.ExecError(
-                f"节点 {node_name} 存在旧格式运行实例(PID {st.pid})，"
-                "请按提示手动处理后再启动")

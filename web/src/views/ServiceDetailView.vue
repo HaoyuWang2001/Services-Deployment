@@ -75,19 +75,15 @@
           </div>
           <div class="inst-actions">
             <el-button size="small" type="success" plain
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('start')">
+                       :disabled="!canStart || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="warning" plain
-                       :disabled="!canRestart || dirty" @click="batchInstanceOp('restart')">
-              重启选中 ({{ selectedInsts.length }})
-            </el-button>
-            <el-button size="small" type="danger" plain
                        :disabled="!canStop || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="danger"
-                       :disabled="!selectedInsts.length || dirty" @click="batchInstanceOp('delete')">
+                       :disabled="!canDelete || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
             <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -103,7 +99,17 @@
         <el-table-column prop="run_id" label="run_id" width="170" />
         <el-table-column label="状态" width="140">
           <template #default="{ row }">
-            <el-tag :type="statusType(row)" size="small">{{ statusText(row) }}</el-tag>
+            <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
+              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="清理状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="cleanupType(row.cleanup_status)" size="small" effect="plain">
+              {{ cleanupText(row.cleanup_status) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="started_at" label="最近启动" width="180" />
@@ -205,7 +211,10 @@ import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
-import { statusType, statusText } from '../instanceStatus'
+import {
+  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  cleanupText, cleanupType, statusText, statusType,
+} from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
 
@@ -442,11 +451,12 @@ async function loadInstances(silent = false) {
   finally { if (!silent) instLoading.value = false }
 }
 
-// 重启/停止仅对「运行中」实例有意义：任一选中实例未运行则置灰
-const allInstsRunning = computed(() =>
-  selectedInsts.value.length > 0 && selectedInsts.value.every((r) => r.status === 'running'))
-const canRestart = allInstsRunning
-const canStop = allInstsRunning
+// 批量按钮门禁：全部选中实例处于允许状态才可用（叠加 dirty 禁用）
+const everyInstIn = (set) => computed(() =>
+  selectedInsts.value.length > 0 && selectedInsts.value.every((r) => set.includes(r.status)))
+const canStart = everyInstIn(STARTABLE)
+const canStop = everyInstIn(STOPPABLE)
+const canDelete = everyInstIn(DELETABLE)
 
 function setTimer() {
   clearInterval(timer)
@@ -454,9 +464,8 @@ function setTimer() {
 }
 
 async function confirmInstOp(action, nodeList) {
-  const extra = { delete: '（停止进程并从列表移除，节点文件保留）',
-                  restart: '（停止后启动，日志续写并加分隔符）',
-                  stop: '（终止进程，实例保留可再启动）' }[action] || ''
+  const extra = { delete: '（从列表移除，节点文件保留，可用「清理」移除）',
+                  stop: '（终止进程并执行 stop.sh 清理，实例保留）' }[action] || ''
   try {
     await ElMessageBox.confirm(
       `确定${ACTION_TEXT[action]} ${nodeList.join('、')} 上的实例（共 ${nodeList.length} 个）${extra}？`,

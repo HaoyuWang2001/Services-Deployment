@@ -58,12 +58,15 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     if service.stop.script:
         stop_script = shlex.quote(service.stop.script)
         qlog = shlex.quote(logfile)
+        qcc = shlex.quote(f"{logdir}/cleanup_code")
+        qcch = shlex.quote(f"{logdir}/cleanup_codes.log")
         auto_cleanup = (
             f'echo "===== [$(date \'+%F %T\')] 自动清理 (stop.sh) =====" >> {qlog}; '
             f'echo "\\$ bash {stop_script}" >> {qlog}; '
             f'cout=$(bash {stop_script} 2>&1); crc=$?; '
             f'printf \'%s\\n\' "$cout" >> {qlog}; '
             f'printf \'[stop.sh 退出码=%s]\\n\' "$crc" >> {qlog}; '
+            f'echo $crc > {qcc}; echo "[$(date \'+%F %T\')] $crc" >> {qcch}; '
         )
     inner = (f"bash {script}"
              + (f" {args}" if args else "")
@@ -188,9 +191,12 @@ def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -
     pidfile = f"run/{service.name}.pid"
     if run_id:
         exit_file = shlex.quote(f"logs/{run_id}/exit_code")
-        dead = f"rc=$(cat {exit_file} 2>/dev/null || echo -n -); echo DEAD $pid rc=$rc; exit 0; "
+        clean_file = shlex.quote(f"logs/{run_id}/cleanup_code")
+        dead = (f"rc=$(cat {exit_file} 2>/dev/null || echo -n -); "
+                f"cc=$(cat {clean_file} 2>/dev/null || echo -n -); "
+                f"echo DEAD $pid rc=$rc cc=$cc; exit 0; ")
     else:
-        dead = "echo DEAD $pid rc=-; exit 0; "
+        dead = "echo DEAD $pid rc=- cc=-; exit 0; "
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
@@ -242,18 +248,21 @@ def parse_pid(stdout: str) -> Optional[int]:
 class ServiceStatus:
     state: str  # running | dead | legacy | reused | nopidfile | nows | unknown
     pid: Optional[int] = None
-    exit_code: Optional[int] = None  # 已退出实例的退出码；None = 无文件（被终止）或非 dead 状态
+    exit_code: Optional[int] = None     # 最近一次 start.sh 退出码（None = 未知/被终止）
+    cleanup_code: Optional[int] = None  # 最近一次 stop.sh 退出码（自动或手动停止）
 
 
 def parse_status(stdout: str) -> ServiceStatus:
     text = stdout.strip()
     m = re.search(r"rc=(\d+)", text)
     exit_code = int(m.group(1)) if m else None
+    m2 = re.search(r"cc=(\d+)", text)
+    cleanup_code = int(m2.group(1)) if m2 else None
     for prefix, state in (("RUNNING", "running"), ("DEAD", "dead"),
                           ("LEGACY", "legacy"), ("REUSED", "reused"),
                           ("NOPIDFILE", "nopidfile"), ("NOWS", "nows")):
         if text.startswith(prefix):
-            return ServiceStatus(state, _pid_of(text), exit_code)
+            return ServiceStatus(state, _pid_of(text), exit_code, cleanup_code)
     return ServiceStatus("unknown")
 
 
@@ -423,12 +432,22 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
                   f"echo \"===== [$(date '+%F %T')] 停止实例 =====\" >> {logref}; true")
         await pool.run(node, header, timeout=15)
 
-    def wrap(inner: str, hint: Optional[str] = None) -> str:
-        """输出双写：追加到实例日志文件，同时回传后端（退出码透传）。"""
+    def wrap(inner: str, hint: Optional[str] = None, code_ref: Optional[str] = None,
+             codes_ref: Optional[str] = None) -> str:
+        """输出双写：追加到实例日志文件，同时回传后端（退出码透传）。
+
+        code_ref/codes_ref 提供时（stop.sh 阶段）：退出码写入 cleanup_code（最近一次）
+        并追加 cleanup_codes.log（历史）。
+        """
         if not logref:
             return inner
         pre = f'echo "{hint}" >> {logref}; ' if hint else ""
+        code_writes = ""
+        if code_ref and codes_ref:
+            code_writes = (f'echo $rc > {code_ref}; '
+                           f'echo "[$(date \'+%F %T\')] $rc" >> {codes_ref}; ')
         return (f"{pre}out=$( {{ {inner}; }} 2>&1); rc=$?; "
+                f"{code_writes}"
                 f'printf \'%s\\n\' "$out" >> {logref} 2>/dev/null; '
                 f'printf \'%s\\n\' "$out"; exit $rc')
 
@@ -440,7 +459,12 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
 
     if service.stop.script:
         hint = f"\\$ bash {shlex.quote(service.stop.script)}"
-        res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint),
+        code_ref = codes_ref = None
+        if run_id:
+            code_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_code")
+            codes_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_codes.log")
+        res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint,
+                                        code_ref=code_ref, codes_ref=codes_ref),
                              timeout=120)
         if not res.ok:
             raise ExecError(f"stop.sh 失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")

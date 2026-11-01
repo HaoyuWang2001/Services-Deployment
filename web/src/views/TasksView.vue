@@ -55,7 +55,7 @@
       </el-table-column>
       <el-table-column label="操作" width="80">
         <template #default="{ row }">
-          <el-tag size="small" :type="{ deploy: 'info', start: 'success', stop: 'danger', restart: 'warning' }[row.action]">
+          <el-tag size="small" :type="{ deploy: 'info', create: 'success', start: 'success', stop: 'danger', delete: 'danger', clean: 'warning' }[row.action] || 'info'">
             {{ ACTION_TEXT[row.action] || row.action }}
           </el-tag>
         </template>

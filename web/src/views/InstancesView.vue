@@ -9,16 +9,13 @@
           </el-tooltip>
         </div>
         <div class="inst-actions">
-          <el-button size="small" type="success" plain :disabled="!selected.length" @click="batch('start')">
+          <el-button size="small" type="success" plain :disabled="!canStart" @click="batch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!canRestart" @click="batch('restart')">
-            重启选中 ({{ selected.length }})
-          </el-button>
-          <el-button size="small" type="danger" plain :disabled="!canStop" @click="batch('stop')">
+          <el-button size="small" type="warning" plain :disabled="!canStop" @click="batch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="danger" :disabled="!selected.length" @click="batch('delete')">
+          <el-button size="small" type="danger" :disabled="!canDelete" @click="batch('delete')">
             删除选中 ({{ selected.length }})
           </el-button>
           <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -34,7 +31,17 @@
       <el-table-column prop="node" label="节点" width="100" />
       <el-table-column label="状态" width="140">
         <template #default="{ row }">
-          <el-tag :type="statusType(row)" size="small">{{ statusText(row) }}</el-tag>
+          <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
+            <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+          </el-tooltip>
+          <el-tag v-else :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="清理状态" width="120">
+        <template #default="{ row }">
+          <el-tag :type="cleanupType(row.cleanup_status)" size="small" effect="plain">
+            {{ cleanupText(row.cleanup_status) }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="pid" label="PID" width="80" />
@@ -57,7 +64,10 @@ import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
-import { statusType, statusText } from '../instanceStatus'
+import {
+  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  cleanupText, cleanupType, statusText, statusType,
+} from '../instanceStatus'
 
 const router = useRouter()
 const instances = ref([])
@@ -67,11 +77,12 @@ const loading = ref(false)
 const autoRefresh = ref(true)
 let timer = null
 
-// 重启/停止仅对「运行中」实例有意义：任一选中实例未运行则置灰
-const allRunning = computed(() =>
-  selected.value.length > 0 && selected.value.every((r) => r.status === 'running'))
-const canRestart = allRunning
-const canStop = allRunning
+// 批量按钮门禁：全部选中实例处于允许状态才可用
+const everyIn = (set) => computed(() =>
+  selected.value.length > 0 && selected.value.every((r) => set.includes(r.status)))
+const canStart = everyIn(STARTABLE)
+const canStop = everyIn(STOPPABLE)
+const canDelete = everyIn(DELETABLE)
 
 async function load(silent = false) {
   if (!silent) loading.value = true
@@ -123,8 +134,8 @@ async function submitGroups(action, rows) {
 
 async function confirmAction(action, targets) {
   const desc = targets.map((t) => `${t.service}@${t.node}`).join('、')
-  const extra = action === 'delete' ? '（停止进程并从列表移除，节点文件保留）'
-    : action === 'restart' ? '（停止后启动，日志续写并加分隔符）' : ''
+  const extra = { delete: '（从列表移除，节点文件保留，可用服务页「清理」移除）',
+                  stop: '（终止进程并执行 stop.sh 清理，实例保留）' }[action] || ''
   try {
     await ElMessageBox.confirm(
       `确定对 ${desc} 执行「${ACTION_TEXT[action]}」${extra}？`,
