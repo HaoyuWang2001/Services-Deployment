@@ -170,6 +170,9 @@ async function openBatch(action) {
 async function confirmBatch() {
   const rows = eligibleTargets.value
   if (!rows.length) return
+  // 立即清空勾选（须在任何 await 之前，避免 reserve-selection 在轮询刷新时恢复勾选的竞态）
+  selected.value = []
+  instTable.value?.clearSelection()
   batchDialog.value = false
   await submitGroups(batchAction.value, rows)
 }

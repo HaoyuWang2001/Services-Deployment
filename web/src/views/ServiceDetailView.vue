@@ -516,6 +516,9 @@ async function batchInstanceOp(action) {
 async function confirmInstBatch() {
   const rows = instBatchEligible.value
   if (!rows.length) return
+  // 立即清空勾选（须在任何 await 之前，避免 reserve-selection 在轮询刷新时恢复勾选的竞态）
+  selectedInsts.value = []
+  instTable.value?.clearSelection()
   instBatchDialog.value = false
   const nodeList = rows.map((r) => r.node)
   try {
@@ -523,8 +526,7 @@ async function confirmInstBatch() {
     trackTask(task.id, `${ACTION_TEXT[instBatchAction.value]}实例 ${name.value}（${nodeList.length} 节点）`)
     ElMessage.success(
       `${ACTION_TEXT[instBatchAction.value]}任务已提交（${task.id}）`
-      + (instBatchAction.value === 'delete' ? '；如需清理节点文件请使用「清理」' : ''))
-    instTable.value?.clearSelection()
+      + (instBatchAction.value === 'delete' ? '；如需清理节点文件请使用「节点清理」' : ''))
     setTimeout(() => loadInstances(true), 800)
     setTimeout(() => loadInstances(true), 3000)
   } catch (e) {
