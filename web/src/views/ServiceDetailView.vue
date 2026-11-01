@@ -36,11 +36,13 @@
                 :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" style="margin-top: 10px" />
       <div class="node-select">
         <span class="label">目标节点：</span>
+        <span class="node-ctrl">
+          <el-button size="small" @click="selectedNodes = [...selectableNodes]">全选</el-button>
+          <el-button size="small" @click="selectedNodes = []">清空</el-button>
+        </span>
         <el-checkbox-group v-model="selectedNodes">
           <el-checkbox v-for="n in selectableNodes" :key="n" :value="n">{{ n }}</el-checkbox>
         </el-checkbox-group>
-        <el-button size="small" class="select-all-btn" @click="selectedNodes = [...selectableNodes]">全选</el-button>
-        <el-button size="small" @click="selectedNodes = []">清空</el-button>
       </div>
       <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
         <span class="label">变量覆盖：</span>
@@ -52,14 +54,16 @@
         </div>
       </div>
       <div class="actions">
-        <el-button size="small" :disabled="blockReasons.length > 0" @click="submit('deploy')">仅部署文件</el-button>
-        <el-checkbox v-model="autoStart" class="auto-start">立即启动</el-checkbox>
+        <el-checkbox v-model="deployOnly" class="deploy-only">仅部署不启动</el-checkbox>
         <el-button class="start-btn" size="small" type="primary"
                    :disabled="blockReasons.length > 0" @click="submit('create')">创建实例</el-button>
-        <el-button size="small" type="danger" plain
-                   :disabled="blockReasons.length > 0" @click="openClean">清理</el-button>
         <span v-if="blockReasons.length" class="dirty-hint">{{ blockReasons.join('；') }}</span>
-        <span v-else class="hint-secondary">创建后：启动 / 重启 / 停止 / 删除均在实例层级操作</span>
+      </div>
+      <div class="danger-row">
+        <span class="danger-label">危险操作：</span>
+        <el-button size="small" type="danger" plain
+                   :disabled="blockReasons.length > 0" @click="openClean">节点清理</el-button>
+        <span class="danger-desc">整目录删除所选节点上该服务的全部部署目录（含历史目录与日志）；须先删除实例后执行</span>
       </div>
     </el-card>
 
@@ -384,7 +388,7 @@ const blockReasons = computed(() => {
   return reasons
 })
 
-const autoStart = ref(true)
+const deployOnly = ref(false)  // 勾选 = 创建实例但仅部署文件不启动
 
 async function submit(action) {
   if (!selectedNodes.value.length) {
@@ -392,7 +396,7 @@ async function submit(action) {
     return
   }
   if (action === 'create') {
-    const extra = autoStart.value ? '并立即启动' : '（仅创建，稍后在实例列表启动）'
+    const extra = deployOnly.value ? '（仅部署文件，不启动）' : '并立即启动'
     try {
       await ElMessageBox.confirm(
         `确定在 ${selectedNodes.value.join('、')} 上创建服务 ${name.value} 的实例${extra}？`,
@@ -405,9 +409,9 @@ async function submit(action) {
   }
   try {
     const payload = { service: name.value, action, nodes: selectedNodes.value, variables }
-    if (action === 'create') payload.auto_start = autoStart.value
+    if (action === 'create') payload.auto_start = !deployOnly.value
     const task = await api.createTask(payload)
-    trackTask(task.id, `${action === 'create' ? '创建实例' : '部署文件'} ${name.value}`)
+    trackTask(task.id, `创建实例 ${name.value}`)
     ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
     setTimeout(() => loadInstances(true), 1000)
     setTimeout(() => loadInstances(true), 4000)
@@ -578,13 +582,16 @@ onDeactivated(() => clearInterval(timer))
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
+.actions .deploy-only { margin-right: 4px; }
 .batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
-.actions .auto-start { margin-left: 20px; margin-right: 4px; }
 .clean-node { margin-bottom: 10px; }
 .clean-node-name { font-weight: 600; margin-bottom: 4px; }
 .clean-dir { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 12px; }
 .clean-dir-path { font-family: Consolas, monospace; font-size: 13px; word-break: break-all; }
-.node-select .select-all-btn { margin-left: 24px; }
+.node-select .node-ctrl { display: inline-flex; align-items: center; margin-right: 12px; }
+.danger-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.danger-label { color: var(--el-color-danger); font-size: 13px; font-weight: 600; }
+.danger-desc { color: var(--el-text-color-secondary); font-size: 12px; }
 .dialog-footer { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
 .dialog-footer .dirty-hint { margin-right: auto; }
 .field-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
