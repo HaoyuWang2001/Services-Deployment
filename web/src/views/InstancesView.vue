@@ -32,11 +32,6 @@
       <el-table-column type="selection" reserve-selection width="45" />
       <el-table-column prop="service" label="服务" min-width="140" />
       <el-table-column prop="node" label="节点" width="100" />
-      <el-table-column label="操作" width="80">
-        <template #default="{ row }">
-          <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
-        </template>
-      </el-table-column>
       <el-table-column label="状态" width="140">
         <template #default="{ row }">
           <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
@@ -56,6 +51,11 @@
       <el-table-column prop="run_id" label="run_id" width="165" />
       <el-table-column prop="started_at" label="最近启动" width="175" />
       <el-table-column prop="log_path" label="日志路径" min-width="220" show-overflow-tooltip />
+      <el-table-column label="操作" width="80">
+        <template #default="{ row }">
+          <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <!-- 批量操作预检确认框 -->
