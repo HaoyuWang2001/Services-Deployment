@@ -12,6 +12,9 @@
           <el-button size="small" type="success" plain :disabled="!canStart" @click="openBatch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
+          <el-button size="small" type="warning" plain :disabled="!canRestart" @click="openBatch('restart')">
+            重启选中 ({{ selected.length }})
+          </el-button>
           <el-button size="small" type="warning" plain :disabled="!canStop" @click="openBatch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
@@ -102,7 +105,7 @@ import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTaskGroup } from '../taskNotify'
 import {
-  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
   cleanupText, cleanupType, statusText, statusType,
 } from '../instanceStatus'
 
@@ -133,6 +136,7 @@ async function load(silent = false) {
 const everyIn = (set) => computed(() =>
   selected.value.length > 0 && selected.value.every((r) => set.includes(r.status)))
 const canStart = everyIn(STARTABLE)
+const canRestart = everyIn(RESTARTABLE)
 const canStop = everyIn(STOPPABLE)
 const canDelete = everyIn(DELETABLE)
 
@@ -156,7 +160,7 @@ const allEligible = computed(() =>
   batchTargets.value.length > 0 && batchTargets.value.every((t) => t.eligible))
 const ineligibleCount = computed(() => batchTargets.value.filter((t) => !t.eligible).length)
 
-const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, restart: RESTARTABLE, delete: DELETABLE }
 
 async function fetchFreshInstances() {
   try { return (await api.instances()).instances } catch { return null }

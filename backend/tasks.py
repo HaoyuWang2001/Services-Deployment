@@ -335,6 +335,52 @@ class TaskManager:
                     sub.run_id = run_id
                     sub.log_path = inst.log_path
 
+            elif task.action == "restart":
+                # 重启 = 链接「停止→启动」，仅运行中；停止失败中止并如实报错，等待用户排查
+                async with self._start_lock(service.name, node_name):
+                    inst = self.instances.get(service.name, node_name)
+                    if inst is None:
+                        raise executor.ExecError(
+                            f"节点 {node_name} 无服务 {service.name} 的实例记录，无法重启")
+                    st = await executor.service_status(self.pool, node, service, inst.run_id)
+                    from .instances import CAN_RESTART, reconcile
+                    display = reconcile(inst.state, st.state, st.exit_code)
+                    if display not in CAN_RESTART:
+                        # 停止失败残留的异常态也拒绝——引导用户先排查/停止归一
+                        raise executor.ExecError(
+                            f"当前状态不允许重启；{_state_guidance(display, st, inst)}")
+                    run_id = inst.run_id
+                    # ① 停止阶段（完整管线：组杀 + stop.sh + 日志）
+                    self.instances.set_state(service.name, node_name, "stopping")
+                    try:
+                        out = await executor.stop_service(self.pool, node, service, run_id=run_id)
+                    except executor.ExecError as e:
+                        msg = str(e)
+                        if "stop.sh 失败" in msg:
+                            m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
+                            code = m.group(1) if m else "?"
+                            self.instances.set_stop_result(
+                                service.name, node_name, f"failed:{code}")
+                        else:
+                            self.instances.set_stop_result(service.name, node_name, "killfail")
+                        st2 = await executor.service_status(self.pool, node, service, run_id)
+                        self.instances.set_state(
+                            service.name, node_name,
+                            "running" if st2.state == "running" else "exited")
+                        raise  # 中止重启，等待用户排查后重新操作
+                    self.instances.set_stop_result(service.name, node_name, "ok")
+                    sub.detail = out
+                    # ② 启动阶段（同 run_id 续写）
+                    self.instances.set_state(service.name, node_name, "starting")
+                    try:
+                        await self._launch(task, service, node, node_name, sub, run_id)
+                    except Exception:
+                        # 停止已成功完成，实例停留已停止（可手动启动）
+                        self.instances.set_state(service.name, node_name, "stopped")
+                        raise
+                    sub.run_id = run_id
+                    sub.log_path = inst.log_path
+
             elif task.action == "delete":
                 # 状态机：created/stopped/completed/notdeployed 直接删除；
                 # running = 链接「停止→删除」，停止必须正常完成否则中止删除；abnormal 拒绝（先停止归一）

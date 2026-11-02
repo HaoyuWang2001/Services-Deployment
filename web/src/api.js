@@ -40,7 +40,7 @@ export const api = {
 }
 
 export const ACTION_TEXT = {
-  deploy: '部署', create: '创建', start: '启动', stop: '停止', delete: '删除',
+  deploy: '部署', create: '创建', start: '启动', stop: '停止', restart: '重启', delete: '删除',
 }
 
 export function fmtTime(ts) {

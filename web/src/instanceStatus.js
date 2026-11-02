@@ -68,9 +68,12 @@ export function cleanupText(c) {
 // 批量按钮门禁集合（按钮要求全部选中实例符合）
 export const STOPPABLE = ['running', 'abnormal', 'completed']
 export const STARTABLE = ['created', 'stopped', 'completed', 'notdeployed']
+export const RESTARTABLE = ['running']
 export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed', 'running']
 
-const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+const ELIGIBLE_SETS = {
+  start: STARTABLE, stop: STOPPABLE, restart: RESTARTABLE, delete: DELETABLE,
+}
 
 export function isEligible(action, status) {
   return (ELIGIBLE_SETS[action] || []).includes(status)

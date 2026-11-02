@@ -30,6 +30,7 @@ TRANSIENT_STATES = ("starting", "stopping", "deleting")
 # 展示状态 → 允许的操作
 CAN_STOP = ("running", "abnormal", "completed")
 CAN_START = ("created", "stopped", "completed", "notdeployed")
+CAN_RESTART = ("running",)  # 重启 = 链接 停止→启动，仅运行中
 CAN_DELETE = ("created", "stopped", "completed", "notdeployed", "running")  # running = 链接 停止→删除
 
 

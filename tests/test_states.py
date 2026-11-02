@@ -50,13 +50,17 @@ def test_reconcile_nopidfile_probe():
 
 
 def test_gating_sets():
+    from backend.instances import CAN_RESTART
     assert set(CAN_STOP) == {"running", "abnormal", "completed"}
     assert set(CAN_START) == {"created", "stopped", "completed", "notdeployed"}
+    # 重启 = 链接 停止→启动，仅运行中
+    assert set(CAN_RESTART) == {"running"}
     # running 允许删除（链接 停止→删除）；abnormal 不允许（须先停止归一）
     assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed", "running"}
     assert "abnormal" not in CAN_DELETE
     for t in TRANSIENT_STATES:
         assert t not in CAN_STOP and t not in CAN_START and t not in CAN_DELETE
+        assert t not in CAN_RESTART
 
 
 def test_cleanup_display():

@@ -83,6 +83,10 @@
               启动选中 ({{ selectedInsts.length }})
             </el-button>
             <el-button size="small" type="warning" plain
+                       :disabled="!canRestartInsts || dirty" @click="batchInstanceOp('restart')">
+              重启选中 ({{ selectedInsts.length }})
+            </el-button>
+            <el-button size="small" type="warning" plain
                        :disabled="!canStopInsts || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
@@ -251,7 +255,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
 import {
-  ABNORMAL_HINT, DELETABLE, STARTABLE, STOPPABLE,
+  ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
   cleanupText, cleanupType, statusText, statusType,
 } from '../instanceStatus'
 const route = useRoute()
@@ -495,6 +499,7 @@ async function loadInstances(silent = false) {
 const everyInstIn = (set) => computed(() =>
   selectedInsts.value.length > 0 && selectedInsts.value.every((r) => set.includes(r.status)))
 const canStartInsts = everyInstIn(STARTABLE)
+const canRestartInsts = everyInstIn(RESTARTABLE)
 const canStopInsts = everyInstIn(STOPPABLE)
 const canDeleteInsts = everyInstIn(DELETABLE)
 
@@ -512,7 +517,7 @@ const instBatchEligible = computed(() => instBatchTargets.value.filter((t) => t.
 const instBatchAllEligible = computed(() =>
   instBatchTargets.value.length > 0 && instBatchTargets.value.every((t) => t.eligible))
 
-const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, restart: RESTARTABLE, delete: DELETABLE }
 
 async function fetchFreshInstances() {
   try { return (await api.instances()).instances } catch { return null }
