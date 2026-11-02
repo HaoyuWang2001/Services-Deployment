@@ -77,12 +77,17 @@
         </el-table-column>
       </el-table>
       <div class="batch-hint">
-        将执行 {{ eligibleTargets.length }} 个；跳过 {{ batchTargets.length - eligibleTargets.length }} 个状态不符实例（跳过项不受影响）
+        <span v-if="allEligible">将执行 {{ batchTargets.length }} 个</span>
+        <span v-else class="batch-warn">
+          存在 {{ ineligibleCount }} 个状态不符实例，不允许部分执行；请重新预检或刷新后重新勾选
+        </span>
+        <el-button size="small" link type="primary" style="margin-left: 10px"
+                   @click="refreshBatchTargets">重新预检</el-button>
       </div>
       <template #footer>
         <el-button @click="batchDialog = false">取消</el-button>
-        <el-button type="primary" :disabled="!eligibleTargets.length" @click="confirmBatch">
-          确认{{ ACTION_TEXT[batchAction] }}（{{ eligibleTargets.length }}）
+        <el-button type="primary" :disabled="!allEligible" @click="confirmBatch">
+          确认{{ ACTION_TEXT[batchAction] }}（{{ batchTargets.length }}）
         </el-button>
       </template>
     </el-dialog>
@@ -146,38 +151,51 @@ const batchAction = ref('stop')
 const batchTargets = ref([])       // {service, node, status, cleanup_status, exit_code, eligible}
 const batchChecking = ref(false)
 
-const eligibleTargets = computed(() => batchTargets.value.filter((t) => t.eligible))
+// 严格预检：全部符合才允许确认（不允许部分执行）
+const allEligible = computed(() =>
+  batchTargets.value.length > 0 && batchTargets.value.every((t) => t.eligible))
+const ineligibleCount = computed(() => batchTargets.value.filter((t) => !t.eligible).length)
+
+const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+
+async function fetchFreshInstances() {
+  try { return (await api.instances()).instances } catch { return null }
+}
+
+function markEligible(action, targets, freshList) {
+  const byKey = new Map((freshList || []).map((i) => [`${i.service}:${i.node}`, i]))
+  return targets.map((t) => {
+    const live = byKey.get(`${t.service}:${t.node}`)
+    const status = live?.status ?? t.status
+    return {
+      ...t,
+      run_id: live?.run_id ?? t.run_id,
+      status,
+      cleanup_status: live?.cleanup_status ?? t.cleanup_status,
+      exit_code: live?.exit_code ?? t.exit_code,
+      eligible: (ELIGIBLE_SETS[action] || []).includes(status),
+    }
+  })
+}
 
 async function openBatch(action) {
   if (!selected.value.length) return
   batchAction.value = action
   batchDialog.value = true
   batchChecking.value = true
-  // 拉取实时状态（失败时回退使用当前表格状态）
-  let fresh = null
-  try {
-    fresh = await api.instances()
-  } catch { /* 使用表格快照 */ }
-  const byKey = new Map((fresh?.instances || []).map((i) => [`${i.service}:${i.node}`, i]))
-  batchTargets.value = selected.value.map((row) => {
-    const live = byKey.get(row.key)
-    const status = live?.status ?? row.status
-    return {
-      service: row.service,
-      node: row.node,
-      run_id: live?.run_id ?? row.run_id,
-      status,
-      cleanup_status: live?.cleanup_status ?? row.cleanup_status,
-      exit_code: live?.exit_code ?? row.exit_code,
-      eligible: ({ start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }[action] || []).includes(status),
-    }
-  })
+  batchTargets.value = markEligible(action, selected.value, await fetchFreshInstances())
+  batchChecking.value = false
+}
+
+async function refreshBatchTargets() {
+  batchChecking.value = true
+  batchTargets.value = markEligible(batchAction.value, batchTargets.value, await fetchFreshInstances())
   batchChecking.value = false
 }
 
 async function confirmBatch() {
-  const rows = eligibleTargets.value
-  if (!rows.length) return
+  if (!allEligible.value) return
+  const rows = batchTargets.value
   // 立即清空勾选（须在任何 await 之前，避免 reserve-selection 在轮询刷新时恢复勾选的竞态）
   selected.value = []
   instTable.value?.clearSelection()
@@ -221,5 +239,6 @@ onUnmounted(() => clearInterval(timer))
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
 .mono { font-family: Consolas, monospace; font-size: 13px; }
-.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
+.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; display: flex; align-items: center; }
+.batch-warn { color: var(--el-color-danger); }
 </style>

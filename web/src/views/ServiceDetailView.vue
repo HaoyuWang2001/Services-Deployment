@@ -146,12 +146,17 @@
         </el-table-column>
       </el-table>
       <div class="batch-hint">
-        将执行 {{ instBatchEligible.length }} 个；跳过 {{ instBatchTargets.length - instBatchEligible.length }} 个状态不符实例（跳过项不受影响）
+        <span v-if="instBatchAllEligible">将执行 {{ instBatchTargets.length }} 个</span>
+        <span v-else class="batch-warn">
+          存在 {{ instBatchTargets.length - instBatchEligible.length }} 个状态不符实例，不允许部分执行；请重新预检或刷新后重新勾选
+        </span>
+        <el-button size="small" link type="primary" style="margin-left: 10px"
+                   @click="refreshInstBatchTargets">重新预检</el-button>
       </div>
       <template #footer>
         <el-button @click="instBatchDialog = false">取消</el-button>
-        <el-button type="primary" :disabled="!instBatchEligible.length" @click="confirmInstBatch">
-          确认{{ ACTION_TEXT[instBatchAction] }}（{{ instBatchEligible.length }}）
+        <el-button type="primary" :disabled="!instBatchAllEligible" @click="confirmInstBatch">
+          确认{{ ACTION_TEXT[instBatchAction] }}（{{ instBatchTargets.length }}）
         </el-button>
       </template>
     </el-dialog>
@@ -503,36 +508,49 @@ const instBatchAction = ref('stop')
 const instBatchTargets = ref([])   // {node, status, eligible}
 const instBatchChecking = ref(false)
 const instBatchEligible = computed(() => instBatchTargets.value.filter((t) => t.eligible))
+// 严格预检：全部符合才允许确认（不允许部分执行）
+const instBatchAllEligible = computed(() =>
+  instBatchTargets.value.length > 0 && instBatchTargets.value.every((t) => t.eligible))
+
+const ELIGIBLE_SETS = { start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }
+
+async function fetchFreshInstances() {
+  try { return (await api.instances()).instances } catch { return null }
+}
+
+function markInstEligible(action, targets, freshList) {
+  const byNode = new Map(
+    (freshList || []).filter((i) => i.service === name.value).map((i) => [i.node, i]))
+  return targets.map((t) => {
+    const live = byNode.get(t.node)
+    const status = live?.status ?? t.status
+    return { ...t, status, exit_code: live?.exit_code ?? t.exit_code,
+             eligible: (ELIGIBLE_SETS[action] || []).includes(status) }
+  })
+}
 
 async function batchInstanceOp(action) {
   if (!selectedInsts.value.length || dirty.value) return
   instBatchAction.value = action
   instBatchDialog.value = true
   instBatchChecking.value = true
-  // 拉取实时状态（失败回退表格快照）
-  let fresh = null
-  try {
-    fresh = await api.instances()
-  } catch { /* 使用表格快照 */ }
-  const byNode = new Map(
-    (fresh?.instances || []).filter((i) => i.service === name.value).map((i) => [i.node, i]))
-  instBatchTargets.value = selectedInsts.value.map((row) => {
-    const live = byNode.get(row.node)
-    const status = live?.status ?? row.status
-    return { node: row.node, status, exit_code: live?.exit_code ?? row.exit_code,
-             eligible: ({ start: STARTABLE, stop: STOPPABLE, delete: DELETABLE }[action] || []).includes(status) }
-  })
+  instBatchTargets.value = markInstEligible(action, selectedInsts.value, await fetchFreshInstances())
+  instBatchChecking.value = false
+}
+
+async function refreshInstBatchTargets() {
+  instBatchChecking.value = true
+  instBatchTargets.value = markInstEligible(instBatchAction.value, instBatchTargets.value, await fetchFreshInstances())
   instBatchChecking.value = false
 }
 
 async function confirmInstBatch() {
-  const rows = instBatchEligible.value
-  if (!rows.length) return
+  if (!instBatchAllEligible.value) return
   // 立即清空勾选（须在任何 await 之前，避免 reserve-selection 在轮询刷新时恢复勾选的竞态）
   selectedInsts.value = []
   instTable.value?.clearSelection()
   instBatchDialog.value = false
-  const nodeList = rows.map((r) => r.node)
+  const nodeList = instBatchTargets.value.map((r) => r.node)
   try {
     const task = await api.createTask({ service: name.value, action: instBatchAction.value, nodes: nodeList })
     trackTask(task.id, `${ACTION_TEXT[instBatchAction.value]}实例 ${name.value}（${nodeList.length} 节点）`)
@@ -591,7 +609,8 @@ onDeactivated(() => clearInterval(timer))
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
 .actions .deploy-only { margin-right: 4px; }
-.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
+.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; display: flex; align-items: center; }
+.batch-warn { color: var(--el-color-danger); }
 .clean-node { margin-bottom: 10px; }
 .clean-node-name { font-weight: 600; margin-bottom: 4px; }
 .clean-dir { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 12px; }
