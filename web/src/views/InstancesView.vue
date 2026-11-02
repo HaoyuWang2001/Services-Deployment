@@ -9,16 +9,16 @@
           </el-tooltip>
         </div>
         <div class="inst-actions">
-          <el-button size="small" type="success" plain :disabled="!canStart" @click="openBatch('start')">
+          <el-button size="small" type="success" :plain="isDark" :disabled="!canStart" @click="openBatch('start')">
             启动选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!canRestart" @click="openBatch('restart')">
+          <el-button size="small" type="primary" :plain="isDark" :disabled="!canRestart" @click="openBatch('restart')">
             重启选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="warning" plain :disabled="!canStop" @click="openBatch('stop')">
+          <el-button size="small" type="warning" :plain="isDark" :disabled="!canStop" @click="openBatch('stop')">
             停止选中 ({{ selected.length }})
           </el-button>
-          <el-button size="small" type="danger" :disabled="!canDelete" @click="openBatch('delete')">
+          <el-button size="small" type="danger" :plain="isDark" :disabled="!canDelete" @click="openBatch('delete')">
             删除选中 ({{ selected.length }})
           </el-button>
           <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
@@ -104,6 +104,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTaskGroup } from '../taskNotify'
+import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
   cleanupText, cleanupType, statusText, statusType,

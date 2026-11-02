@@ -28,36 +28,13 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { Moon, Sunny } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
+import { isDark, toggleDark } from './theme'
 
 const route = useRoute()
 const menuActive = computed(() => '/' + (route.path.split('/')[1] || ''))
-
-const THEME_KEY = 'sd-theme'
-
-function initialDark() {
-  const saved = localStorage.getItem(THEME_KEY)
-  if (saved === 'dark') return true
-  if (saved === 'light') return false
-  return window.matchMedia('(prefers-color-scheme: dark)').matches  // 首次访问跟随系统
-}
-
-const isDark = ref(initialDark())
-
-function applyTheme(dark) {
-  document.documentElement.classList.toggle('dark', dark)
-}
-
-function toggleDark() {
-  isDark.value = !isDark.value
-}
-
-watch(isDark, (v) => {
-  applyTheme(v)
-  localStorage.setItem(THEME_KEY, v ? 'dark' : 'light')
-}, { immediate: true })
 </script>
 
 <style scoped>

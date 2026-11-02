@@ -78,19 +78,19 @@
             </el-tooltip>
           </div>
           <div class="inst-actions">
-            <el-button size="small" type="success" plain
+            <el-button size="small" type="success" :plain="isDark"
                        :disabled="!canStartInsts || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="warning" plain
+            <el-button size="small" type="primary" :plain="isDark"
                        :disabled="!canRestartInsts || dirty" @click="batchInstanceOp('restart')">
               重启选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="warning" plain
+            <el-button size="small" type="warning" :plain="isDark"
                        :disabled="!canStopInsts || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="danger"
+            <el-button size="small" type="danger" :plain="isDark"
                        :disabled="!canDeleteInsts || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
@@ -254,6 +254,7 @@ import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT } from '../api'
 import { trackTask } from '../taskNotify'
+import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
   cleanupText, cleanupType, statusText, statusType,
