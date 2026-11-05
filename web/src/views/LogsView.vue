@@ -35,6 +35,7 @@
             <el-button size="small" :disabled="!tab.service || !tab.nodeSel.length" @click="download(tab)">下载快照</el-button>
             <el-switch v-model="tab.autoscroll" size="small" active-text="自动滚动" />
             <el-switch v-model="tab.autoReconnect" size="small" active-text="自动重连" />
+            <el-switch v-model="tab.wrapLines" size="small" active-text="换行" />
           </div>
         </div>
 
@@ -53,7 +54,7 @@
             <span v-else-if="tab.reconnecting" class="reconnect-hint">⟳ 自动重连中（第 {{ tab.reconnectAttempts }} 次）</span>
         </div>
 
-        <div class="terminal" :ref="(el) => setTerm(tab.id, el)">
+        <div class="terminal" :class="{ 'no-wrap': !tab.wrapLines }" :ref="(el) => setTerm(tab.id, el)">
           <div v-for="item in displayLines(tab)" :key="item.srcIdx" class="line"
                :class="[item.kind, { 'cur-match': isCurrentMatch(tab, item.srcIdx) }]"
                :data-line="item.srcIdx">
@@ -217,6 +218,7 @@ function newTab(preset = {}, autoConnect = false) {
     tail: 100,
     autoscroll: true,
     autoReconnect: true,
+    wrapLines: true,
     manualStop: false,
     reconnecting: false,
     reconnectAttempts: 0,
@@ -458,6 +460,8 @@ onUnmounted(() => tabs.forEach((t) => {
   min-height: 220px;
 }
 .line { white-space: pre-wrap; word-break: break-all; }
+.terminal.no-wrap { overflow-x: auto; }
+.terminal.no-wrap .line { white-space: pre; word-break: normal; }
 .line.error { color: #f38ba8; }
 .line.notice { color: #6c7086; font-style: italic; }
 .line.cur-match { background: rgba(64, 158, 255, 0.18); border-radius: 3px; }
