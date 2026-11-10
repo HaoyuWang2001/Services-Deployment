@@ -1,7 +1,130 @@
+/* ============================================================
+ * 设计 token（webui-design skill）
+ * 颜色优先 var(--el-*)，其次 --sd-*；禁止散落 hex 字面量。
+ * ============================================================ */
+:root {
+  --sd-font-ui: system-ui, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --sd-font-mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+
+  --sd-space-1: 4px;
+  --sd-space-2: 8px;
+  --sd-space-3: 12px;
+  --sd-space-4: 16px;
+  --sd-space-5: 20px;
+  --sd-space-6: 24px;
+
+  --sd-radius: 4px;
+
+  /* 主色：深青技术色系（亮色主题） */
+  --el-color-primary: #0e7490;
+  --el-color-primary-light-3: #569eb1;
+  --el-color-primary-light-5: #87bac8;
+  --el-color-primary-light-7: #b7d5de;
+  --el-color-primary-light-8: #cfe3e9;
+  --el-color-primary-light-9: #e7f1f4;
+  --el-color-primary-dark-2: #0b5d73;
+
+  /* 终端（亮色主题下仍用柔和深底，保证日志可读性） */
+  --sd-term-bg: #12171b;
+  --sd-term-fg: #d6dde3;
+  --sd-term-muted: #8391a0;
+  --sd-term-error: #ff8f9c;
+  --sd-term-hit-bg: #f2d27a;
+  --sd-term-hit-fg: #12171b;
+  --sd-term-cur-bg: rgba(14, 116, 144, 0.32);
+
+  /* 节点标识色：跨页面统一由 ui/nodeColors.js 分配 */
+  --sd-node-1: #0f766e;
+  --sd-node-2: #2563eb;
+  --sd-node-3: #b45309;
+  --sd-node-4: #7c3aed;
+  --sd-node-5: #be123c;
+  --sd-node-6: #0369a1;
+  --sd-node-7: #4d7c0f;
+  --sd-node-8: #be185d;
+  --sd-node-9: #475569;
+  --sd-node-10: #a16207;
+
+  color-scheme: light;
+}
+
+html.dark {
+  /* 主色：暗色主题提亮，派生档按 EP 暗色规则（向背景混色） */
+  --el-color-primary: #27b3c9;
+  --el-color-primary-light-3: #218393;
+  --el-color-primary-light-5: #1e646f;
+  --el-color-primary-light-7: #1a444a;
+  --el-color-primary-light-8: #183438;
+  --el-color-primary-light-9: #162426;
+  --el-color-primary-dark-2: #52c2d4;
+
+  --sd-term-bg: #0c1115;
+  --sd-term-fg: #d6dde3;
+  --sd-term-muted: #7d8a94;
+  --sd-term-error: #ff8f9c;
+  --sd-term-hit-bg: #e8c96a;
+  --sd-term-hit-fg: #0c1115;
+  --sd-term-cur-bg: rgba(39, 179, 201, 0.28);
+
+  --sd-node-1: #2dd4bf;
+  --sd-node-2: #60a5fa;
+  --sd-node-3: #fbbf24;
+  --sd-node-4: #a78bfa;
+  --sd-node-5: #fb7185;
+  --sd-node-6: #22d3ee;
+  --sd-node-7: #a3e635;
+  --sd-node-8: #f472b6;
+  --sd-node-9: #94a3b8;
+  --sd-node-10: #fcd34d;
+
+  color-scheme: dark;
+}
+
 html, body, #app {
   height: 100%;
   margin: 0;
-  font-family: system-ui, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  background-color: var(--el-bg-color);
+  font-family: var(--sd-font-ui);
+  background-color: var(--el-bg-color-page);
   color: var(--el-text-color-primary);
 }
+
+/* ------------------------------------------------------------ 通用工具 ---- */
+.sd-page { display: flex; flex-direction: column; gap: var(--sd-space-4); height: 100%; }
+.sd-mono { font-family: var(--sd-font-mono); }
+.sd-num { font-variant-numeric: tabular-nums; }
+.sd-muted { color: var(--el-text-color-secondary); font-size: 12px; }
+.sd-label { color: var(--el-text-color-secondary); font-size: 13px; }
+.sd-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sd-space-3); }
+.sd-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sd-space-2); }
+
+.el-table .cell { line-height: 1.5; }
+
+/* 按钮按压反馈（emil-design-eng：即时、克制） */
+@media (prefers-reduced-motion: no-preference) {
+  .el-button:not(.is-disabled):active { transform: scale(0.97); }
+}
+
+/* ------------------------------------------------------------ 终端 ---- */
+.sd-term {
+  background: var(--sd-term-bg);
+  color: var(--sd-term-fg);
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--sd-radius);
+  padding: var(--sd-space-3) var(--sd-space-4);
+  font-family: var(--sd-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: auto;
+}
+.sd-term .line { white-space: pre-wrap; word-break: break-all; content-visibility: auto; contain-intrinsic-size: auto 21px; }
+.sd-term.no-wrap { overflow-x: auto; }
+.sd-term.no-wrap .line { white-space: pre; word-break: normal; }
+.sd-term .line.error { color: var(--sd-term-error); }
+.sd-term .line.notice { color: var(--sd-term-muted); font-style: italic; }
+.sd-term .line.cur-match { background: var(--sd-term-cur-bg); border-radius: 3px; }
+.sd-term .hit { background: var(--sd-term-hit-bg); color: var(--sd-term-hit-fg); border-radius: 2px; padding: 0 1px; }
+.sd-term .line.cur-match .hit { background: var(--el-color-primary); color: #fff; }
+.sd-term .empty { color: var(--sd-term-muted); padding: 40px 0; text-align: center; }
+.sd-term .waiting { color: var(--sd-term-muted); }
+.sd-term .out { margin: 0; white-space: pre-wrap; word-break: break-all; }
+.sd-term .err { margin: 0; color: var(--sd-term-error); white-space: pre-wrap; word-break: break-all; }

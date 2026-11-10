@@ -21,11 +21,11 @@ const STATUS_TEXT = {
   stopping: '停止中',
   stopped: '已停止',
   deleting: '删除中',
-  completed: '已完成(0)',
+  completed: '已完成（0）',
   abnormal: '异常',
   created: '未启动',
   notdeployed: '未部署',
-  legacy: '旧实例(需手动处理)',
+  legacy: '旧实例（需手动处理）',
   reused: 'PID复用',
   unknown: '未知',
 }
@@ -37,7 +37,7 @@ export function statusType(s) {
 export function statusText(row) {
   const s = row.status
   if (s === 'abnormal') {
-    return row.exit_code != null ? `异常(码=${row.exit_code})` : '异常(无码)'
+    return row.exit_code != null ? `异常（码=${row.exit_code}）` : '异常（无码）'
   }
   return STATUS_TEXT[s] || s
 }
@@ -59,7 +59,7 @@ export function cleanupText(c) {
   if (!c || c === 'none') return '—'
   if (c === 'running') return '执行中'
   if (c === 'ok') return '正常'
-  if (c.startsWith('failed:')) return `清理失败(${c.slice(7)})`
+  if (c.startsWith('failed:')) return `清理失败（${c.slice(7)}）`
   if (c === 'killfail') return '停止失败'
   if (c === 'unclean') return '未清理'
   return c

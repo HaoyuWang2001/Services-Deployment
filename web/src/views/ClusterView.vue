@@ -1,31 +1,37 @@
 <template>
-  <div>
-    <el-alert v-if="error" :title="`cluster.json 加载失败：${error}`" type="error" show-icon :closable="false" style="margin-bottom: 16px" />
+  <div class="sd-page">
+    <PageHeader title="集群节点" description="cluster.json 中的节点列表；测试 SSH 连通性与监听端口">
+      <template #actions>
+        <el-button size="small" @click="openPortQuery">端口查询</el-button>
+        <el-button size="small" @click="reloadConfig" :loading="reloading">重新加载配置</el-button>
+        <el-button size="small" type="primary" @click="testAll" :loading="testing">全部测试连接</el-button>
+      </template>
+    </PageHeader>
+
+    <el-alert v-if="error" :title="`cluster.json 加载失败：${error}`" type="error" show-icon :closable="false" />
 
     <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>集群节点（cluster.json）</span>
-          <div>
-            <el-button size="small" @click="openPortQuery">端口查询</el-button>
-            <el-button size="small" @click="reloadConfig">重新加载配置</el-button>
-            <el-button size="small" type="primary" @click="testAll" :loading="testing">全部测试连接</el-button>
-          </div>
-        </div>
-      </template>
-
-      <el-table :data="nodes" v-loading="loading" empty-text="暂无节点：请复制 cluster.example.json 为 cluster.json 并修改，然后点击「重新加载配置」">
+      <el-table :data="nodes" v-loading="loading" size="small">
+        <template #empty>
+          <el-empty description="暂无节点配置">
+            <el-button size="small" @click="reloadConfig" :loading="reloading">重新加载配置</el-button>
+          </el-empty>
+        </template>
         <el-table-column prop="name" label="名称" width="140" />
-        <el-table-column prop="ip" label="IP" width="160" />
-        <el-table-column prop="username" label="用户名" width="100" />
-        <el-table-column prop="port" label="端口" width="80" />
+        <el-table-column label="IP" width="160">
+          <template #default="{ row }"><span class="sd-mono">{{ row.ip }}</span></template>
+        </el-table-column>
+        <el-table-column prop="username" label="用户名" width="110" />
+        <el-table-column label="端口" width="80">
+          <template #default="{ row }"><span class="sd-num">{{ row.port }}</span></template>
+        </el-table-column>
         <el-table-column prop="private_key" label="私钥" min-width="180" show-overflow-tooltip />
         <el-table-column label="sudo" width="70">
           <template #default="{ row }">
             <el-tooltip v-if="row.sudo" content="特权操作（端口监控）经 sudo -n 执行" placement="top">
               <el-tag type="warning" size="small">sudo</el-tag>
             </el-tooltip>
-            <span v-else>-</span>
+            <span v-else class="sd-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="连接状态" width="120">
@@ -34,16 +40,16 @@
             <el-tooltip v-else-if="results[row.name]" :content="results[row.name].detail" placement="top">
               <el-tag type="danger" size="small">失败</el-tag>
             </el-tooltip>
-            <el-tag v-else type="info" size="small">未测试</el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">未测试</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="环境" min-width="140">
           <template #default="{ row }">
             <span v-if="results[row.name]?.ok">{{ results[row.name].kernel }}（{{ results[row.name].arch }}）</span>
-            <span v-else>-</span>
+            <span v-else class="sd-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="140">
+        <el-table-column label="操作" width="130">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="testOne(row.name)">测试</el-button>
             <el-button size="small" link type="primary" @click="openPorts(row.name)">端口</el-button>
@@ -57,29 +63,31 @@
       <div class="drawer-toolbar">
         <el-input v-model="portsFilter" placeholder="按端口/进程/用户过滤" size="small" clearable style="width: 260px" />
         <el-button size="small" @click="loadPorts(portsNode)" :loading="portsLoading">刷新</el-button>
-        <el-alert v-if="portsWarning" :title="portsWarning" type="warning" show-icon :closable="false" style="flex: 1" />
       </div>
-      <el-alert v-if="portsError" :title="portsError" type="error" show-icon :closable="false" style="margin-bottom: 10px" />
-      <el-table :data="filteredPorts" v-loading="portsLoading" size="small"
-                empty-text="暂无监听端口（或节点不可达）">
+      <el-alert v-if="portsWarning" :title="portsWarning" type="warning" show-icon :closable="false" class="mb-3" />
+      <el-alert v-if="portsError" :title="portsError" type="error" show-icon :closable="false" class="mb-3" />
+      <el-table :data="filteredPorts" v-loading="portsLoading" size="small">
+        <template #empty><el-empty description="暂无监听端口（或节点不可达）" :image-size="60" /></template>
         <el-table-column prop="proto" label="协议" width="70" />
         <el-table-column prop="state" label="状态" width="90" />
         <el-table-column prop="local_addr" label="监听地址" min-width="140" />
-        <el-table-column prop="port" label="端口" width="90" sortable />
+        <el-table-column label="端口" width="90" sortable>
+          <template #default="{ row }"><span class="sd-num">{{ row.port }}</span></template>
+        </el-table-column>
         <el-table-column label="用户" width="110">
           <template #default="{ row }">
             <span v-if="usersOf(row).length">{{ usersOf(row).join('、') }}</span>
-            <span v-else class="no-proc">-</span>
+            <span v-else class="sd-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="进程" min-width="200">
           <template #default="{ row }">
             <span v-if="row.processes.length">
-              <span v-for="(p, i) in row.processes" :key="i" class="proc">
-                {{ p.process }}<span class="pid">(#{{ p.pid }})</span>{{ i < row.processes.length - 1 ? '、' : '' }}
+              <span v-for="(p, i) in row.processes" :key="i" class="sd-mono">
+                {{ p.process }}<span class="pid">（#{{ p.pid }}）</span>{{ i < row.processes.length - 1 ? '、' : '' }}
               </span>
             </span>
-            <span v-else class="no-proc">-</span>
+            <span v-else class="sd-muted">-</span>
           </template>
         </el-table-column>
       </el-table>
@@ -88,20 +96,20 @@
     <!-- 端口对照查询 -->
     <el-dialog v-model="portQueryVisible" title="端口查询：多节点占用对照" width="760px">
       <div class="pq-form">
-        <span class="label">端口号</span>
-        <el-input-number v-model="pqPort" :min="1" :max="65535" controls-position="right" style="width: 140px" />
-        <span class="label" style="margin-left: 16px">节点</span>
-        <el-select v-model="pqNodes" multiple placeholder="选择节点" style="width: 360px">
+        <span class="sd-label">端口号</span>
+        <el-input-number v-model="pqPort" :min="1" :max="65535" controls-position="right" size="small" style="width: 140px" />
+        <span class="sd-label">节点</span>
+        <el-select v-model="pqNodes" multiple filterable placeholder="选择节点" size="small" style="width: 360px">
           <el-option v-for="n in nodes" :key="n.name" :label="n.name" :value="n.name" />
         </el-select>
         <el-button type="primary" size="small" :loading="pqLoading" @click="runPortQuery">查询</el-button>
       </div>
-      <el-table :data="pqResults" v-loading="pqLoading" size="small" style="margin-top: 12px"
-                empty-text="输入端口号并选择节点后查询">
+      <el-table :data="pqResults" v-loading="pqLoading" size="small" class="mt-3">
+        <template #empty><el-empty description="输入端口号并选择节点后查询" :image-size="60" /></template>
         <el-table-column prop="node" label="节点" width="110" />
         <el-table-column label="结果" width="100">
           <template #default="{ row }">
-            <el-tag v-if="row.ok === null" type="info" size="small">未查询</el-tag>
+            <el-tag v-if="row.ok === null" type="info" size="small" effect="plain">未查询</el-tag>
             <el-tag v-else-if="row.ok && row.matches.length" type="danger" size="small">占用</el-tag>
             <el-tag v-else-if="row.ok" type="success" size="small">空闲</el-tag>
             <el-tag v-else type="warning" size="small">失败</el-tag>
@@ -109,9 +117,9 @@
         </el-table-column>
         <el-table-column label="占用进程 / 说明" min-width="320">
           <template #default="{ row }">
-            <span v-if="row.ok && row.matches.length">
-              <span v-for="(m, i) in row.matches" :key="i" class="proc">
-                {{ m.proto }} {{ m.local_addr }}:{{ m.port }} → {{ m.processes.map(p => `${p.user || '?'}:${p.process}(#${p.pid})`).join('、') || '未知进程' }}{{ i < row.matches.length - 1 ? '；' : '' }}
+            <span v-if="row.ok && row.matches.length" class="sd-mono">
+              <span v-for="(m, i) in row.matches" :key="i">
+                {{ m.proto }} {{ m.local_addr }}:{{ m.port }} → {{ m.processes.map(p => `${p.user || '?'}:${p.process}（#${p.pid}）`).join('、') || '未知进程' }}{{ i < row.matches.length - 1 ? '；' : '' }}
               </span>
             </span>
             <span v-else>{{ row.detail || '-' }}</span>
@@ -124,14 +132,18 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
+import PageHeader from '../components/PageHeader.vue'
 
 const nodes = ref([])
 const error = ref(null)
 const loading = ref(false)
 const testing = ref(false)
+const reloading = ref(false)
 const results = reactive({})
+
+const TEST_CONCURRENCY = 5
 
 async function load() {
   loading.value = true
@@ -140,33 +152,61 @@ async function load() {
     nodes.value = data.nodes
     error.value = data.error
   } catch (e) {
-    ElMessage.error(`加载节点失败: ${e.message}`)
+    ElMessage.error(`加载节点失败：${e.message}`)
   } finally {
     loading.value = false
   }
 }
 
-async function testOne(name) {
+async function probeNode(name) {
   try {
-    results[name] = { ...(await api.testNode(name)) }
-    if (!results[name].ok) ElMessage.warning(`${name}: ${results[name].detail}`)
+    const r = await api.testNode(name)
+    results[name] = { ...r }
+    return { name, ok: !!r.ok, detail: r.detail }
   } catch (e) {
     results[name] = { ok: false, detail: e.message }
-    ElMessage.error(`${name}: ${e.message}`)
+    return { name, ok: false, detail: e.message }
   }
 }
 
+async function testOne(name) {
+  const r = await probeNode(name)
+  if (!r.ok) ElMessage.warning(`${name}：${r.detail}`)
+}
+
 async function testAll() {
+  if (!nodes.value.length) {
+    ElMessage.warning('暂无节点可测试')
+    return
+  }
   testing.value = true
+  const queue = nodes.value.map((n) => n.name)
+  const out = []
+  const worker = async () => {
+    while (queue.length) out.push(await probeNode(queue.shift()))
+  }
   try {
-    await Promise.all(nodes.value.map((n) => testOne(n.name)))
-    ElMessage.success('测试完成')
+    await Promise.all(Array.from({ length: Math.min(TEST_CONCURRENCY, queue.length) }, worker))
+    const failed = out.filter((r) => !r.ok)
+    if (!failed.length) {
+      ElMessage.success(`全部 ${out.length} 个节点连接正常`)
+    } else {
+      ElMessage.warning(`${out.length} 个节点中 ${failed.length} 个连接失败：${failed.map((f) => f.name).join('、')}`)
+    }
   } finally {
     testing.value = false
   }
 }
 
 async function reloadConfig() {
+  try {
+    await ElMessageBox.confirm(
+      '将重新读取 cluster.json 与 services/ 配置。未保存的配置编辑内容会丢失，确定继续？',
+      '重新加载配置',
+      { type: 'warning', confirmButtonText: '重新加载', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  reloading.value = true
   try {
     const r = await api.reloadConfig()
     await load()
@@ -177,6 +217,8 @@ async function reloadConfig() {
     }
   } catch (e) {
     ElMessage.error(e.message)
+  } finally {
+    reloading.value = false
   }
 }
 
@@ -273,11 +315,9 @@ onMounted(load)
 </script>
 
 <style scoped>
-.card-header { display: flex; justify-content: space-between; align-items: center; }
-.drawer-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
-.proc { font-family: Consolas, monospace; }
+.drawer-toolbar { display: flex; gap: var(--sd-space-2); align-items: center; margin-bottom: var(--sd-space-3); }
 .pid { color: var(--el-text-color-secondary); }
-.no-proc { color: var(--el-text-color-placeholder); }
-.pq-form { display: flex; align-items: center; gap: 8px; }
-.pq-form .label { color: var(--el-text-color-secondary); font-size: 13px; }
+.pq-form { display: flex; align-items: center; gap: var(--sd-space-2); }
+.mb-3 { margin-bottom: var(--sd-space-3); }
+.mt-3 { margin-top: var(--sd-space-3); }
 </style>

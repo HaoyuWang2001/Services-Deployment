@@ -1,24 +1,24 @@
 <template>
   <div v-if="loadError" class="err-block">
     <el-alert :title="loadError" type="error" show-icon :closable="false" />
-    <el-button style="margin-top: 12px" @click="$router.push('/services')">返回服务列表</el-button>
+    <el-button class="mt-3" @click="$router.push('/services')">返回服务列表</el-button>
   </div>
 
   <div v-else v-loading="!cfg">
     <!-- 页头 -->
-    <div class="page-head">
-      <el-button link @click="$router.push('/services')">← 返回</el-button>
-      <span class="title">{{ name }}</span>
-      <el-tag v-if="dirty" type="warning" size="small">有未保存的修改</el-tag>
-      <div class="head-actions">
+    <PageHeader :title="name" description="服务配置、实例创建与运行实例管理" back @back="$router.push('/services')">
+      <template #badge>
+        <el-tag v-if="dirty" type="warning" size="small">有未保存的修改</el-tag>
+      </template>
+      <template #actions>
         <el-button size="small" @click="refreshFromDisk" :loading="reloading">重新读取配置</el-button>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- 启动实例 -->
     <el-card shadow="never" class="block">
       <template #header>
-        <div class="card-header">
+        <div class="sd-card-head">
           <span>启动实例</span>
           <el-button size="small" :type="dirty ? 'warning' : 'primary'" plain
                      :disabled="!cfg" @click="cfgDialog = true">修改服务配置</el-button>
@@ -33,7 +33,7 @@
       </el-descriptions>
 
       <el-alert v-if="cfg?.nodes?.length" type="info" :closable="false" show-icon
-                :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" style="margin-top: 10px" />
+                :title="`该服务限定目标节点：${cfg.nodes.join('、')}`" class="mt-2" />
       <div class="node-select">
         <span class="label">目标节点：</span>
         <span class="node-ctrl">
@@ -70,44 +70,47 @@
     <!-- 运行实例 -->
     <el-card shadow="never" class="block">
       <template #header>
-        <div class="card-header">
+        <div class="sd-card-head">
           <div class="inst-title">
             <span>运行实例</span>
             <el-tooltip content="刷新" placement="top">
-              <el-button size="small" circle :icon="Refresh" :loading="instLoading" @click="loadInstances()" />
+              <el-button size="small" circle :icon="Refresh" :loading="instLoading" aria-label="刷新实例列表" @click="loadInstances()" />
             </el-tooltip>
           </div>
           <div class="inst-actions">
-            <el-button size="small" type="success" :plain="isDark"
+            <el-button size="small" plain
                        :disabled="!canStartInsts || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="primary" :plain="isDark"
+            <el-button size="small" plain
                        :disabled="!canRestartInsts || dirty" @click="batchInstanceOp('restart')">
               重启选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="warning" :plain="isDark"
+            <el-button size="small" plain
                        :disabled="!canStopInsts || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="danger" :plain="isDark"
+            <el-button size="small" type="danger" plain
                        :disabled="!canDeleteInsts || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-switch v-model="autoRefresh" active-text="10s 自动刷新" style="margin-left: 12px" />
+            <el-switch v-model="autoRefresh" active-text="10 秒自动刷新" class="auto-switch" />
           </div>
         </div>
       </template>
       <el-table ref="instTable" :data="instances" v-loading="instLoading" size="small" row-key="node"
-                @selection-change="(rows) => (selectedInsts = rows)"
-                empty-text="暂无实例（尚未启动过）">
+                @selection-change="(rows) => (selectedInsts = rows)">
+        <template #empty><el-empty description="暂无实例，可在上方创建" :image-size="60" /></template>
         <el-table-column type="selection" reserve-selection width="45" />
         <el-table-column prop="node" label="节点" width="110" />
         <el-table-column label="状态" width="140">
           <template #default="{ row }">
-            <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
-              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
-            </el-tooltip>
+            <el-popover v-if="row.status === 'abnormal'" placement="top" :width="300"
+                        trigger="hover" :show-after="150" :content="ABNORMAL_HINT">
+              <template #reference>
+                <el-tag :type="statusType(row.status)" size="small" class="status-hint">{{ statusText(row) }}</el-tag>
+              </template>
+            </el-popover>
             <el-tag v-else :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
           </template>
         </el-table-column>
@@ -118,13 +121,34 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="pid" label="PID" width="90" />
-        <el-table-column prop="run_id" label="run_id" width="170" />
-        <el-table-column prop="started_at" label="最近启动" width="180" />
+        <el-table-column label="PID" width="90">
+          <template #default="{ row }"><span class="sd-mono sd-num">{{ row.pid ?? '-' }}</span></template>
+        </el-table-column>
+        <el-table-column label="run_id" width="160">
+          <template #default="{ row }"><span class="sd-mono">{{ row.run_id }}</span></template>
+        </el-table-column>
+        <el-table-column label="最近启动" width="130">
+          <template #default="{ row }">
+            <span :title="fmtTime(row.started_at)">{{ fmtTimeRel(row.started_at) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
+            <el-dropdown trigger="click" class="row-more" @command="(cmd) => rowOp(cmd, row)">
+              <el-button size="small" link type="primary">
+                更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="start" :disabled="!isEligible('start', row.status)">启动</el-dropdown-item>
+                  <el-dropdown-item command="restart" :disabled="!isEligible('restart', row.status)">重启</el-dropdown-item>
+                  <el-dropdown-item command="stop" :disabled="!isEligible('stop', row.status)">停止</el-dropdown-item>
+                  <el-dropdown-item command="delete" :disabled="!isEligible('delete', row.status)" divided>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -136,9 +160,12 @@
         <el-table-column prop="node" label="节点" min-width="140" />
         <el-table-column label="当前状态" width="150">
           <template #default="{ row }">
-            <el-tooltip v-if="row.status === 'abnormal'" :content="ABNORMAL_HINT" placement="top">
-              <el-tag :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
-            </el-tooltip>
+            <el-popover v-if="row.status === 'abnormal'" placement="top" :width="300"
+                        trigger="hover" :show-after="150" :content="ABNORMAL_HINT">
+              <template #reference>
+                <el-tag :type="statusType(row.status)" size="small" class="status-hint">{{ statusText(row) }}</el-tag>
+              </template>
+            </el-popover>
             <el-tag v-else :type="statusType(row.status)" size="small">{{ statusText(row) }}</el-tag>
           </template>
         </el-table-column>
@@ -154,12 +181,12 @@
         <span v-else class="batch-warn">
           存在 {{ instBatchTargets.length - instBatchEligible.length }} 个状态不符实例，不允许部分执行；请重新预检或刷新后重新勾选
         </span>
-        <el-button size="small" link type="primary" style="margin-left: 10px"
+        <el-button size="small" link type="primary" class="ml-2"
                    @click="refreshInstBatchTargets">重新预检</el-button>
       </div>
       <template #footer>
         <el-button @click="instBatchDialog = false">取消</el-button>
-        <el-button type="primary" :disabled="!instBatchAllEligible" @click="confirmInstBatch">
+        <el-button :type="instBatchAction === 'delete' ? 'danger' : 'primary'" :disabled="!instBatchAllEligible" @click="confirmInstBatch">
           确认{{ ACTION_TEXT[instBatchAction] }}（{{ instBatchTargets.length }}）
         </el-button>
       </template>
@@ -167,7 +194,7 @@
 
     <!-- 清理对话框 -->
     <el-dialog v-model="cleanDialog" title="清理服务文件" width="680px">
-      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
+      <el-alert type="warning" :closable="false" show-icon class="mb-3"
                 title="将删除所选节点上该服务的全部部署目录（含历史目录与日志，整目录删除）；仅当节点上不存在实例时允许清理" />
       <div v-for="(dirs, node) in cleanDirs" :key="node" class="clean-node">
         <div class="clean-node-name">{{ node }}</div>
@@ -177,7 +204,7 @@
           <el-tag v-else size="small" type="info">历史</el-tag>
         </div>
       </div>
-      <el-form label-width="80px" style="margin-top: 10px">
+      <el-form label-width="80px" class="mt-3">
         <el-form-item label="补录路径">
           <el-input v-model="extraPaths" type="textarea" :rows="2"
                     placeholder="每行一个绝对路径（本系统部署历史之外、确属该服务的旧目录）" />
@@ -211,7 +238,7 @@
         <el-form-item label="停止方式">
           <div class="stop-row">
             <el-input v-model="form.stopScript" placeholder="停止脚本（留空则按 PID kill）" style="width: 320px" />
-            <span class="stop-timeout-label">kill 超时(秒)</span>
+            <span class="stop-timeout-label">kill 超时（秒）</span>
             <el-input-number v-model="form.stopTimeout" :min="1" :max="300" style="width: 110px" />
           </div>
         </el-form-item>
@@ -250,14 +277,15 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { ArrowDown, Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, ACTION_TEXT } from '../api'
+import { api, ACTION_TEXT, fmtTime, fmtTimeRel } from '../api'
 import { trackTask } from '../taskNotify'
-import { isDark } from '../theme'
+import PageHeader from '../components/PageHeader.vue'
+import { confirmDanger } from '../ui/confirm'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
-  cleanupText, cleanupType, statusText, statusType,
+  cleanupText, cleanupType, isEligible, statusText, statusType,
 } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
@@ -376,10 +404,34 @@ async function refreshFromDisk() {
   }
 }
 
-function rebuildOverride() {
-  for (const k of Object.keys(varsOverride)) delete varsOverride[k]
-  for (const k of Object.keys(cfg.value?.variables || {})) varsOverride[k] = ''
+const draftKey = computed(() => `sd:vars-override:${name.value}`)
+
+function loadDraft() {
+  try {
+    const d = JSON.parse(localStorage.getItem(draftKey.value) || '{}')
+    return d && typeof d === 'object' ? d : {}
+  } catch { return {} }
 }
+
+function saveDraft() {
+  try {
+    const filled = {}
+    for (const [k, v] of Object.entries(varsOverride)) {
+      if (v !== '') filled[k] = v
+    }
+    localStorage.setItem(draftKey.value, JSON.stringify(filled))
+  } catch { /* localStorage 不可用时静默忽略 */ }
+}
+
+function rebuildOverride() {
+  const draft = loadDraft()
+  for (const k of Object.keys(varsOverride)) delete varsOverride[k]
+  for (const k of Object.keys(cfg.value?.variables || {})) {
+    varsOverride[k] = draft[k] != null ? String(draft[k]) : ''
+  }
+}
+
+watch(varsOverride, saveDraft, { deep: true })
 
 // ---------------------------------------------------------------- 启动实例
 const selectableNodes = computed(() => {
@@ -574,6 +626,25 @@ function viewLog(row) {
   useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
 }
 
+async function rowOp(action, row) {
+  if (action === 'delete') {
+    try {
+      await confirmDanger(
+        `确定删除实例 ${row.service}@${row.node}？运行中的实例会先停止再删除。`,
+        { title: '删除实例确认', confirmText: '删除实例' },
+      )
+    } catch { return }
+  }
+  try {
+    const task = await api.createTask({ service: name.value, action, nodes: [row.node] })
+    trackTask(task.id, `${ACTION_TEXT[action]}实例 ${row.service}@${row.node}`)
+    ElMessage.success(`已提交${ACTION_TEXT[action]}任务`)
+    setTimeout(() => loadInstances(true), 800)
+  } catch (e) {
+    ElMessage.error(`${ACTION_TEXT[action]}失败：${e.message}`)
+  }
+}
+
 // ---------------------------------------------------------------- 初始化
 async function init() {
   loadError.value = null
@@ -606,21 +677,22 @@ onDeactivated(() => clearInterval(timer))
 
 <style scoped>
 .err-block { max-width: 560px; margin: 40px auto; text-align: center; }
-.page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-.page-head .title { font-size: 17px; font-weight: 600; }
-.head-actions { margin-left: auto; }
-.block { margin-bottom: 16px; }
+.block { margin-bottom: var(--sd-space-4); }
+.mt-2 { margin-top: var(--sd-space-2); }
+.mt-3 { margin-top: var(--sd-space-3); }
+.mb-3 { margin-bottom: var(--sd-space-3); }
+.ml-2 { margin-left: var(--sd-space-2); }
 .cfg-form { max-width: 760px; }
 .cfg-summary { margin-bottom: 12px; }
 .hint-secondary { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
 .actions .start-btn { margin-left: 20px; }
 .actions .deploy-only { margin-right: 4px; }
-.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; display: flex; align-items: center; }
+.batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: var(--sd-space-3); display: flex; align-items: center; gap: var(--sd-space-2); }
 .batch-warn { color: var(--el-color-danger); }
 .clean-node { margin-bottom: 10px; }
 .clean-node-name { font-weight: 600; margin-bottom: 4px; }
 .clean-dir { display: flex; align-items: center; gap: 8px; padding: 2px 0 2px 12px; }
-.clean-dir-path { font-family: Consolas, monospace; font-size: 13px; word-break: break-all; }
+.clean-dir-path { font-family: var(--sd-font-mono); font-size: 13px; word-break: break-all; }
 .node-select .node-ctrl { display: inline-flex; align-items: center; margin-right: 12px; }
 .danger-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .danger-label { color: var(--el-color-danger); font-size: 13px; font-weight: 600; }
@@ -633,13 +705,16 @@ onDeactivated(() => clearInterval(timer))
 .vars-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .var-row { display: flex; align-items: center; gap: 8px; }
 .dirty-hint { color: var(--el-color-warning); font-size: 12px; margin-left: 10px; }
-.label { color: var(--el-text-color-secondary); font-size: 13px; }
+.status-hint { cursor: help; }
 .node-select { margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.label { color: var(--el-text-color-secondary); font-size: 13px; }
 .var-form { margin-bottom: 10px; display: flex; align-items: flex-start; }
+.var-form .label { height: 24px; display: inline-flex; align-items: center; flex-shrink: 0; }
 .var-inputs { display: flex; flex-wrap: wrap; gap: 8px; }
 .var-input { display: flex; align-items: center; gap: 6px; }
 .var-key { font-size: 12px; color: var(--el-text-color-regular); }
-.card-header { display: flex; justify-content: space-between; align-items: center; }
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
+.auto-switch { margin-left: var(--sd-space-3); }
+.row-more { margin-left: var(--sd-space-2); }
 </style>
