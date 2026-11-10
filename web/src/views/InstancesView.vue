@@ -14,15 +14,15 @@
         <span class="sd-muted">已选 {{ selected.length }} / {{ instances.length }} 个实例</span>
         <div class="toolbar-actions">
           <el-tooltip :disabled="canStart" content="请勾选实例；且选中实例需全部处于可启动状态" placement="top">
-            <span><el-button size="small" :disabled="!canStart" @click="openBatch('start')">启动选中</el-button></span>
+            <span><el-button size="small" type="success" :plain="isDark" :disabled="!canStart" @click="openBatch('start')">启动选中</el-button></span>
           </el-tooltip>
           <el-tooltip :disabled="canRestart" content="请勾选实例；且选中实例需全部处于运行中" placement="top">
-            <span><el-button size="small" :disabled="!canRestart" @click="openBatch('restart')">重启选中</el-button></span>
+            <span><el-button size="small" type="primary" :plain="isDark" :disabled="!canRestart" @click="openBatch('restart')">重启选中</el-button></span>
           </el-tooltip>
           <el-tooltip :disabled="canStop" content="请勾选实例；且选中实例需全部处于可停止状态" placement="top">
-            <span><el-button size="small" :disabled="!canStop" @click="openBatch('stop')">停止选中</el-button></span>
+            <span><el-button size="small" type="warning" :plain="isDark" :disabled="!canStop" @click="openBatch('stop')">停止选中</el-button></span>
           </el-tooltip>
-          <el-button size="small" type="danger" plain :disabled="!canDelete" @click="openBatch('delete')">
+          <el-button size="small" type="danger" :plain="isDark" :disabled="!canDelete" @click="openBatch('delete')">
             删除选中
           </el-button>
         </div>
@@ -68,22 +68,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="80">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
-            <el-dropdown trigger="click" class="row-more" @command="(cmd) => rowOp(cmd, row)">
-              <el-button size="small" link type="primary">
-                更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="start" :disabled="!isEligible('start', row.status)">启动</el-dropdown-item>
-                  <el-dropdown-item command="restart" :disabled="!isEligible('restart', row.status)">重启</el-dropdown-item>
-                  <el-dropdown-item command="stop" :disabled="!isEligible('stop', row.status)">停止</el-dropdown-item>
-                  <el-dropdown-item command="delete" :disabled="!isEligible('delete', row.status)" divided>删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -130,12 +117,12 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ArrowDown, Refresh } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { api, ACTION_TEXT, fmtTime, fmtTimeRel } from '../api'
-import { trackTask, trackTaskGroup } from '../taskNotify'
+import { trackTaskGroup } from '../taskNotify'
 import PageHeader from '../components/PageHeader.vue'
-import { confirmDanger } from '../ui/confirm'
+import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
   cleanupText, cleanupType, isEligible, statusText, statusType,
@@ -179,26 +166,6 @@ function setTimer() {
 
 function viewLog(row) {
   router.push({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
-}
-
-// ---------------------------------------------------------------- 行内操作 ----
-async function rowOp(action, row) {
-  if (action === 'delete') {
-    try {
-      await confirmDanger(
-        `确定删除实例 ${row.service}@${row.node}？运行中的实例会先停止再删除。`,
-        { title: '删除实例确认', confirmText: '删除实例' },
-      )
-    } catch { return }
-  }
-  try {
-    const task = await api.createTask({ service: row.service, action, nodes: [row.node] })
-    trackTask(task.id, `${ACTION_TEXT[action]}实例 ${row.service}@${row.node}`)
-    ElMessage.success(`已提交${ACTION_TEXT[action]}任务`)
-    setTimeout(() => load(true), 800)
-  } catch (e) {
-    ElMessage.error(`${ACTION_TEXT[action]}失败：${e.message}`)
-  }
 }
 
 // ---------------------------------------------------------------- 批量预检 ----
@@ -292,7 +259,6 @@ onUnmounted(() => clearInterval(timer))
 .table-card :deep(.el-card__body) { padding: var(--sd-space-3) var(--sd-space-4) var(--sd-space-4); }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sd-space-2); margin-bottom: var(--sd-space-3); }
 .toolbar-actions { display: flex; align-items: center; gap: var(--sd-space-2); }
-.row-more { margin-left: var(--sd-space-2); }
 .batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: var(--sd-space-3); display: flex; align-items: center; gap: var(--sd-space-2); }
 .batch-warn { color: var(--el-color-danger); }
 .status-hint { cursor: help; }

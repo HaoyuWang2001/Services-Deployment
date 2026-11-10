@@ -78,19 +78,19 @@
             </el-tooltip>
           </div>
           <div class="inst-actions">
-            <el-button size="small" plain
+            <el-button size="small" type="success" :plain="isDark"
                        :disabled="!canStartInsts || dirty" @click="batchInstanceOp('start')">
               启动选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" plain
+            <el-button size="small" type="primary" :plain="isDark"
                        :disabled="!canRestartInsts || dirty" @click="batchInstanceOp('restart')">
               重启选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" plain
+            <el-button size="small" type="warning" :plain="isDark"
                        :disabled="!canStopInsts || dirty" @click="batchInstanceOp('stop')">
               停止选中 ({{ selectedInsts.length }})
             </el-button>
-            <el-button size="small" type="danger" plain
+            <el-button size="small" type="danger" :plain="isDark"
                        :disabled="!canDeleteInsts || dirty" @click="batchInstanceOp('delete')">
               删除选中 ({{ selectedInsts.length }})
             </el-button>
@@ -133,22 +133,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="80">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
-            <el-dropdown trigger="click" class="row-more" @command="(cmd) => rowOp(cmd, row)">
-              <el-button size="small" link type="primary">
-                更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="start" :disabled="!isEligible('start', row.status)">启动</el-dropdown-item>
-                  <el-dropdown-item command="restart" :disabled="!isEligible('restart', row.status)">重启</el-dropdown-item>
-                  <el-dropdown-item command="stop" :disabled="!isEligible('stop', row.status)">停止</el-dropdown-item>
-                  <el-dropdown-item command="delete" :disabled="!isEligible('delete', row.status)" divided>删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -277,15 +264,15 @@
 <script setup>
 import { computed, onActivated, onDeactivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowDown, Refresh } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT, fmtTime, fmtTimeRel } from '../api'
 import { trackTask } from '../taskNotify'
 import PageHeader from '../components/PageHeader.vue'
-import { confirmDanger } from '../ui/confirm'
+import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
-  cleanupText, cleanupType, isEligible, statusText, statusType,
+  cleanupText, cleanupType, statusText, statusType,
 } from '../instanceStatus'
 const route = useRoute()
 const useRouterPush = useRouter().push
@@ -626,25 +613,6 @@ function viewLog(row) {
   useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
 }
 
-async function rowOp(action, row) {
-  if (action === 'delete') {
-    try {
-      await confirmDanger(
-        `确定删除实例 ${row.service}@${row.node}？运行中的实例会先停止再删除。`,
-        { title: '删除实例确认', confirmText: '删除实例' },
-      )
-    } catch { return }
-  }
-  try {
-    const task = await api.createTask({ service: name.value, action, nodes: [row.node] })
-    trackTask(task.id, `${ACTION_TEXT[action]}实例 ${row.service}@${row.node}`)
-    ElMessage.success(`已提交${ACTION_TEXT[action]}任务`)
-    setTimeout(() => loadInstances(true), 800)
-  } catch (e) {
-    ElMessage.error(`${ACTION_TEXT[action]}失败：${e.message}`)
-  }
-}
-
 // ---------------------------------------------------------------- 初始化
 async function init() {
   loadError.value = null
@@ -716,5 +684,4 @@ onDeactivated(() => clearInterval(timer))
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
 .auto-switch { margin-left: var(--sd-space-3); }
-.row-more { margin-left: var(--sd-space-2); }
 </style>

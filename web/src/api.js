@@ -78,20 +78,36 @@ const dtf = new Intl.DateTimeFormat('zh-CN', {
 })
 const rtf = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
 
+// 时间入参归一：数字/数字串按 unix 秒，ISO 字符串按日期解析；非法返回 null。
+function toDate(ts) {
+  if (ts == null || ts === '') return null
+  if (typeof ts === 'number') {
+    const d = new Date(ts * 1000)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  if (typeof ts === 'string') {
+    if (/^\d+(\.\d+)?$/.test(ts.trim())) return toDate(Number(ts))
+    const d = new Date(ts)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  return null
+}
+
 export function fmtTime(ts) {
-  if (!ts) return '-'
-  return dtf.format(new Date(ts * 1000))
+  const d = toDate(ts)
+  return d ? dtf.format(d) : '-'
 }
 
 // 相对时间：1 分钟内精确到秒，1 小时内到分，24 小时内到小时，更早显示绝对时间。
 export function fmtTimeRel(ts) {
-  if (!ts) return '-'
-  const diff = (ts * 1000 - Date.now()) / 1000
+  const d = toDate(ts)
+  if (!d) return '-'
+  const diff = (d.getTime() - Date.now()) / 1000
   const abs = Math.abs(diff)
   if (abs < 60) return rtf.format(Math.round(diff), 'second')
   if (abs < 3600) return rtf.format(Math.round(diff / 60), 'minute')
   if (abs < 86400) return rtf.format(Math.round(diff / 3600), 'hour')
-  return fmtTime(ts)
+  return dtf.format(d)
 }
 
 export function fmtDuration(a, b) {

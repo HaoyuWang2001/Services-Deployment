@@ -1,1 +1,0 @@
-import{E as e}from"./index-D_TZkbFc.js";function c(n,{title:t="危险操作确认",confirmText:o="确认",...r}={}){return e.confirm(n,t,{type:"warning",confirmButtonText:o,cancelButtonText:"取消",confirmButtonClass:"el-button--danger",...r})}export{c};
