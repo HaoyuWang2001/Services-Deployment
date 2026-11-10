@@ -204,7 +204,7 @@ def test_task_validate_nodes_whitelist_and_hidden(tmp_path):
     tm = TaskManager(pool=None, store=store, instances=None,
                      data_dir=tmp_path, history=DeployHistory(tmp_path))
 
-    svc, nodes, _ = tm.validate("etcd", "start", ["node4"], {})
+    svc, nodes = tm.validate("etcd", "start", ["node4"], {})
     assert [n.name for n in nodes] == ["node4"]
 
     with pytest.raises(TaskError, match="目标节点"):

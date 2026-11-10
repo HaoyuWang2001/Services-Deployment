@@ -26,6 +26,18 @@ def test_monitor_store_crud_roundtrip(tmp_path):
     assert MonitorStore(tmp_path).list() == []
 
 
+def test_monitor_store_nodes_roundtrip(tmp_path):
+    """监控项保存目标节点；未传 nodes 的更新保持原值。"""
+    store = MonitorStore(tmp_path)
+    m = store.create("io", "iostat", 3, nodes=["node1", "node2"])
+    assert m.nodes == ["node1", "node2"]
+    assert MonitorStore(tmp_path).list()[0].nodes == ["node1", "node2"]
+    updated = store.update(m.id, nodes=["node3"])
+    assert updated.nodes == ["node3"]
+    kept = store.update(m.id, interval=10)
+    assert kept.nodes == ["node3"]
+
+
 def test_monitor_store_duplicate_name(tmp_path):
     store = MonitorStore(tmp_path)
     store.create("dup", "uptime", 2)

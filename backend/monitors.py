@@ -20,6 +20,7 @@ class Monitor(BaseModel):
     name: str
     cmd: str
     interval: int = Field(default=2, ge=1, le=60)
+    nodes: list[str] = Field(default_factory=list)  # 保存时的目标节点（空 = 未指定）
     created_at: float = Field(default_factory=time.time)
 
     @field_validator("name")
@@ -77,17 +78,20 @@ class MonitorStore:
     def _name_taken(self, name: str, exclude_id: Optional[str] = None) -> bool:
         return any(m.name == name and m.id != exclude_id for m in self._items.values())
 
-    def create(self, name: str, cmd: str, interval: int) -> Monitor:
+    def create(self, name: str, cmd: str, interval: int,
+               nodes: Optional[list[str]] = None) -> Monitor:
         if self._name_taken(name):
             raise ValueError(f"监控项名称已存在: {name}")
-        m = Monitor(id=uuid.uuid4().hex[:12], name=name, cmd=cmd, interval=interval)
+        m = Monitor(id=uuid.uuid4().hex[:12], name=name, cmd=cmd, interval=interval,
+                    nodes=list(nodes or []))
         self._items[m.id] = m
         self._save()
         log.info("监控项已创建: %s (每 %ss 执行)", name, interval)
         return m
 
     def update(self, id_: str, name: Optional[str] = None, cmd: Optional[str] = None,
-               interval: Optional[int] = None) -> Monitor:
+               interval: Optional[int] = None,
+               nodes: Optional[list[str]] = None) -> Monitor:
         m = self._items.get(id_)
         if m is None:
             raise KeyError(f"监控项不存在: {id_}")
@@ -95,7 +99,8 @@ class MonitorStore:
         new = Monitor(id=m.id, created_at=m.created_at,
                       name=name if name is not None else m.name,
                       cmd=cmd if cmd is not None else m.cmd,
-                      interval=interval if interval is not None else m.interval)
+                      interval=interval if interval is not None else m.interval,
+                      nodes=list(nodes) if nodes is not None else m.nodes)
         if self._name_taken(new.name, exclude_id=id_):
             raise ValueError(f"监控项名称已存在: {new.name}")
         self._items[id_] = new

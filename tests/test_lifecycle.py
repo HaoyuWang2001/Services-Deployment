@@ -18,7 +18,7 @@ def make_manager(tmp_path: Path) -> TaskManager:
     d = svc_dir / "svc"
     d.mkdir()
     (d / "service.json").write_text(
-        '{"name": "svc", "workspace": "/data/svc"}', encoding="utf-8")
+        '{"name": "svc", "workspace": "/data/svc", "variables": {"A": "1"}}', encoding="utf-8")
     (d / "start.sh").write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
     registry = InstanceRegistry(tmp_path)
@@ -95,6 +95,100 @@ def test_registry_migration_from_stopped_flag(tmp_path):
     assert reg.get("a", "n1").state == "stopped"
     assert reg.get("a", "n2").state == "running"
     assert reg.get("b", "n1").state == "created"
+
+
+def test_registry_variables_snapshot(tmp_path):
+    """变量快照随实例持久化，set_variables 更新跨进程生效。"""
+    reg = InstanceRegistry(tmp_path)
+    inst = reg.create("svc", "n1", "run-1", "/data/svc/logs/run-1/svc.log",
+                      variables={"A": "1", "B": "9"})
+    assert inst.variables == {"A": "1", "B": "9"}
+    # 跨进程持久化
+    assert InstanceRegistry(tmp_path).get("svc", "n1").variables == {"A": "1", "B": "9"}
+    # 更新快照
+    reg.set_variables("svc", "n1", {"A": "2", "C": "3"})
+    got = InstanceRegistry(tmp_path).get("svc", "n1")
+    assert got.variables == {"A": "2", "C": "3"}
+    # 旧格式实例（无 variables 字段）加载为空 dict（= 无快照的旧实例）
+    import json
+    f2 = tmp_path / "data2"
+    f2.mkdir()
+    (f2 / "instances.json").write_text(json.dumps({"instances": [
+        {"service": "old", "node": "n1", "run_id": "r1", "log_path": "/l", "state": "stopped"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+    assert InstanceRegistry(f2).get("old", "n1").variables == {}
+
+
+def _start_task(variables=None):
+    return Task(id="t1", service="svc", action="start", nodes=["n1"],
+                variables=variables or {})
+
+
+def test_resolve_launch_vars_uses_instance_snapshot(tmp_path):
+    """有快照的实例：启动 / 重启原样沿用快照，解析层不改记录。"""
+    tm = make_manager(tmp_path)
+    tm.instances.create("svc", "n1", "run-1", "/l", variables={"A": "1", "B": "9"})
+    svc = tm.store.service("svc")
+    variables, snapshot = tm._resolve_launch_vars(_start_task(), svc, "n1")
+    assert variables == {"A": "1", "B": "9"}  # 快照原样沿用
+    assert snapshot is None                   # 无需更新记录
+    # 任务显式携带变量：合并为新快照（由 _launch 在启动成功后落库）
+    variables, snapshot = tm._resolve_launch_vars(_start_task({"C": "2"}), svc, "n1")
+    assert variables == {"A": "1", "B": "9", "C": "2"}
+    assert snapshot == variables
+
+
+def test_resolve_launch_vars_legacy_and_missing(tmp_path):
+    """无快照的旧实例 / 无实例记录：以当前 service 默认变量为基础。"""
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    # 无实例记录（防御路径）
+    variables, snapshot = tm._resolve_launch_vars(_start_task(), svc, "n1")
+    assert variables == {"A": "1"} and snapshot is None
+    # 旧实例（无快照）+ 任务无变量：沿用默认值，不落库
+    tm.instances.create("svc", "n1", "run-1", "/l")
+    variables, snapshot = tm._resolve_launch_vars(_start_task(), svc, "n1")
+    assert variables == {"A": "1"} and snapshot is None
+    assert tm.instances.get("svc", "n1").variables == {}
+    # 旧实例 + 任务显式携带变量：默认值+新变量，冻结落库后不再受默认值变更影响
+    variables, snapshot = tm._resolve_launch_vars(_start_task({"B": "9"}), svc, "n1")
+    assert variables == {"A": "1", "B": "9"}
+    tm.instances.set_variables("svc", "n1", snapshot)  # 模拟 _launch 启动成功后落库
+    svc.variables["A"] = "changed"
+    variables, _ = tm._resolve_launch_vars(_start_task(), svc, "n1")
+    assert variables == {"A": "1", "B": "9"}
+
+
+def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
+    """_launch：沿用实例快照注入启动命令；显式携带变量时启动成功后落库新快照。"""
+    import asyncio
+
+    from backend.config import Node
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    node = Node(name="n1", ip="1.1.1.1", username="root", port=22,
+                private_key="~/.ssh/id_rsa", connect_timeout=10)
+    svc = tm.store.service("svc")
+    captured = {}
+
+    async def fake_start(pool, node_, service, run_id, variables):
+        captured["vars"] = variables
+        return {"pid": 42, "log_path": "/l", "uploaded": 0}
+
+    monkeypatch.setattr("backend.tasks.executor.start_service", fake_start)
+
+    tm.instances.create("svc", "n1", "run-1", "/l", variables={"A": "1", "B": "9"})
+    sub = SubTask(node="n1")
+    # 无变量启动：原样沿用快照，记录不变
+    asyncio.run(tm._launch(_start_task(), svc, node, "n1", sub, "run-1"))
+    assert captured["vars"] == {"A": "1", "B": "9"}
+    assert tm.instances.get("svc", "n1").variables == {"A": "1", "B": "9"}
+    assert sub.pid == 42 and sub.run_id == "run-1"
+    # 显式携带变量启动：合并注入并落库新快照
+    asyncio.run(tm._launch(_start_task({"C": "2"}), svc, node, "n1", sub, "run-1"))
+    assert captured["vars"] == {"A": "1", "B": "9", "C": "2"}
+    assert tm.instances.get("svc", "n1").variables == {"A": "1", "B": "9", "C": "2"}
 
 
 def test_create_dirs_command_cleans_stale_pidfile():

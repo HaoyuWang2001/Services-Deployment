@@ -43,7 +43,7 @@ class Task(BaseModel):
     service: str
     action: str
     nodes: list[str]
-    variables: dict[str, str] = Field(default_factory=dict)
+    variables: dict[str, str] = Field(default_factory=dict)  # 用户显式提供的覆盖变量（原样记录）
     auto_start: bool = True  # create 动作：创建后是否立即启动
     paths: list[str] = Field(default_factory=list)  # clean 动作：补录的待清理目录
     status: str = "running"  # running | completed | partial | failed
@@ -74,11 +74,11 @@ def _state_guidance(display: str, st=None, inst=None) -> str:
     if display == "stopped":
         return "实例已停止，无需停止；可直接「启动」或「删除」"
     if display == "completed":
-        return f"实例已完成(0){'，退出码 ' + str(st.exit_code) if st and st.exit_code is not None else ''}；可直接「启动」或「删除」，或「停止」重跑清理"
+        return f"实例已完成（0）{'，退出码 ' + str(st.exit_code) if st and st.exit_code is not None else ''}；可直接「启动」或「删除」，或「停止」重跑清理"
     if display == "abnormal":
         code = ""
         if st is not None and st.exit_code is not None:
-            code = f"(码={st.exit_code})"
+            code = f"（码={st.exit_code}）"
         return (f"实例处于异常态{code}，进程已异常退出且不会自动清理；"
                 "请先执行「停止」进入已停止状态，再启动或删除")
     if display == "created":
@@ -86,7 +86,7 @@ def _state_guidance(display: str, st=None, inst=None) -> str:
     if display == "notdeployed":
         return "节点上未找到部署目录（workspace 缺失）；可直接「启动」（将重新部署）或「删除」"
     if display == "legacy":
-        return f"存在旧格式运行实例(PID {st.pid if st else '?'})，请按提示手动处理"
+        return f"存在旧格式运行实例（PID {st.pid if st else '?'}），请按提示手动处理"
     if display == "reused":
         return "PID 已被其他进程复用，无法安全操作；可「删除」实例"
     return f"实例状态异常({display})"
@@ -149,7 +149,7 @@ class TaskManager:
         return run_id
 
     def validate(self, service_name: str, action: str, nodes: list[str],
-                 variables: dict[str, str]) -> tuple[ServiceConfig, list[Node], dict[str, str]]:
+                 variables: dict[str, str]) -> tuple[ServiceConfig, list[Node]]:
         if action not in ACTIONS:
             raise TaskError(f"action 必须是 {list(ACTIONS)}，收到: {action!r}")
         try:
@@ -170,19 +170,17 @@ class TaskManager:
                     f"节点不在服务 {service_name} 的目标节点列表 {service.nodes} 中: {not_allowed}")
         if len(set(nodes)) != len(nodes):
             raise TaskError("nodes 存在重复")
-        merged = dict(service.variables)
-        for k, v in (variables or {}).items():
+        for k in (variables or {}):
             if not ENV_NAME_RE.match(k):
                 raise TaskError(f"变量名非法: {k!r}")
-            merged[k] = str(v)
         resolved_nodes = [self.store.node(n) for n in nodes]
-        return service, resolved_nodes, merged
+        return service, resolved_nodes
 
     async def create(self, service_name: str, action: str, nodes: list[str],
                      variables: dict[str, str] | None = None,
                      auto_start: bool = True,
                      paths: list[str] | None = None) -> Task:
-        service, resolved_nodes, merged_vars = self.validate(
+        service, resolved_nodes = self.validate(
             service_name, action, nodes, variables or {})
         clean_paths: list[str] = []
         if action == "clean":
@@ -196,7 +194,7 @@ class TaskManager:
             service=service_name,
             action=action,
             nodes=list(nodes),
-            variables={} if action in ("stop", "delete", "clean") else merged_vars,
+            variables={} if action in ("stop", "delete", "clean") else dict(variables or {}),
             auto_start=auto_start,
             paths=clean_paths,
             run_id=self.new_run_id() if action == "create" else None,
@@ -261,7 +259,8 @@ class TaskManager:
                             f"节点 {node_name} 上存在运行中的进程但无实例记录"
                             f"（状态 {st.state}，PID {st.pid}），请先停止或删除后再创建")
                     self.instances.create(service.name, node_name, task.run_id,
-                                          service.log_path(task.run_id))
+                                          service.log_path(task.run_id),
+                                          variables={**service.variables, **task.variables})
                     await executor.create_dirs(self.pool, node, service, task.run_id)
                     self._record_ws(service, node_name)
                     sub.run_id = task.run_id
@@ -463,7 +462,11 @@ class TaskManager:
     async def _launch(self, task: Task, service: ServiceConfig, node: Node,
                       node_name: str, sub: SubTask, run_id: str) -> None:
         """部署 + 分隔符 + 续写启动，并更新实例记录。"""
-        info = await executor.start_service(self.pool, node, service, run_id, task.variables)
+        variables, snapshot = self._resolve_launch_vars(task, service, node_name)
+        info = await executor.start_service(self.pool, node, service, run_id, variables)
+        if snapshot is not None:
+            # 启动成功后才落库：失败时实例保持原快照，与状态回滚哲学一致
+            self.instances.set_variables(service.name, node_name, snapshot)
         self._record_ws(service, node_name)
         sub.pid = info["pid"]
         sub.run_id = run_id
@@ -474,11 +477,35 @@ class TaskManager:
         if task.run_id is None:
             task.run_id = run_id
 
+    def _resolve_launch_vars(self, task: Task, service: ServiceConfig,
+                             node_name: str) -> tuple[dict[str, str], Optional[dict[str, str]]]:
+        """解析本次启动的有效变量（冻结快照语义）。
+
+        - 实例记录创建 / 最近一次显式设置时的完整变量集（默认值 + 覆盖值）；
+        - 后续启动、重启**原样沿用**快照（service.json 修改默认变量不影响已建实例）；
+        - 任务显式携带 variables 时：合并进快照并更新实例记录；
+        - 无快照的旧实例沿用当前 service 默认变量，直至某次显式设置后才冻结。
+
+        返回 (本次生效变量, 需落库的新快照 or None)。
+        """
+        inst = self.instances.get(service.name, node_name)
+        if inst is not None and inst.variables:
+            merged = dict(inst.variables)
+            if task.variables:
+                merged.update(task.variables)
+                return merged, merged
+            return merged, None
+        merged = dict(service.variables)
+        merged.update(task.variables)
+        return merged, (merged if task.variables else None)
+
     def _ensure_instance(self, task: Task, service: ServiceConfig, node_name: str) -> str:
-        """返回实例 run_id；实例不存在时自动创建（API 兼容：直接 start）。"""
+        """返回实例 run_id；实例不存在时自动创建（API 兼容：直接 start），
+        并冻结 默认变量 + 任务覆盖变量 为实例快照。"""
         inst = self.instances.get(service.name, node_name)
         if inst is not None:
             return inst.run_id
         run_id = task.run_id or self.new_run_id()
-        self.instances.create(service.name, node_name, run_id, service.log_path(run_id))
+        self.instances.create(service.name, node_name, run_id, service.log_path(run_id),
+                              variables={**service.variables, **task.variables})
         return run_id

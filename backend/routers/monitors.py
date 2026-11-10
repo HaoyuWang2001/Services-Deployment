@@ -27,12 +27,14 @@ class MonitorCreateRequest(BaseModel):
     name: str
     cmd: str
     interval: int = 2
+    nodes: list[str] = []
 
 
 class MonitorUpdateRequest(BaseModel):
     name: Optional[str] = None
     cmd: Optional[str] = None
     interval: Optional[int] = None
+    nodes: Optional[list[str]] = None
 
 
 @router.get("")
@@ -43,7 +45,7 @@ async def list_monitors(store: MonitorStore = Depends(get_monitors)):
 @router.post("", status_code=201)
 async def create_monitor(req: MonitorCreateRequest, store: MonitorStore = Depends(get_monitors)):
     try:
-        m = store.create(req.name, req.cmd, req.interval)
+        m = store.create(req.name, req.cmd, req.interval, req.nodes)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return m.model_dump()
@@ -53,7 +55,7 @@ async def create_monitor(req: MonitorCreateRequest, store: MonitorStore = Depend
 async def update_monitor(monitor_id: str, req: MonitorUpdateRequest,
                          store: MonitorStore = Depends(get_monitors)):
     try:
-        m = store.update(monitor_id, req.name, req.cmd, req.interval)
+        m = store.update(monitor_id, req.name, req.cmd, req.interval, req.nodes)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:

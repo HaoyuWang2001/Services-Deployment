@@ -48,6 +48,10 @@ class Instance(BaseModel):
     stop_result: str = "none"  # 手动停止结果：none/ok/failed:N/killfail
     created_at: str = Field(default_factory=_now_iso)
     started_at: str = Field(default_factory=_now_iso)  # 最近一次启动时间
+    # 冻结的完整变量快照（service.json 默认值 + 用户覆盖）：
+    # 创建实例时落库，后续启动 / 重启原样沿用；显式携带变量的启动合并更新。
+    # 空 dict = 旧实例（本字段引入前创建），沿用当前 service 默认变量。
+    variables: dict[str, str] = Field(default_factory=dict)
 
 
 def reconcile(reg_state: str, probe: str, exit_code: Optional[int]) -> str:
@@ -135,9 +139,11 @@ class InstanceRegistry:
         )
         tmp.replace(self._file)
 
-    def create(self, service: str, node: str, run_id: str, log_path: str) -> Instance:
-        """创建实例记录（state=created）。"""
-        inst = Instance(service=service, node=node, pid=None, run_id=run_id, log_path=log_path)
+    def create(self, service: str, node: str, run_id: str, log_path: str,
+               variables: Optional[dict[str, str]] = None) -> Instance:
+        """创建实例记录（state=created）；variables 为冻结的完整变量快照。"""
+        inst = Instance(service=service, node=node, pid=None, run_id=run_id,
+                        log_path=log_path, variables=variables or {})
         self._items[(service, node)] = inst
         self._save()
         return inst
@@ -166,6 +172,14 @@ class InstanceRegistry:
         if inst is None:
             return
         inst.stop_result = result
+        self._save()
+
+    def set_variables(self, service: str, node: str, variables: dict[str, str]) -> None:
+        """更新实例的变量快照（显式携带变量的启动合并后调用）。"""
+        inst = self._items.get((service, node))
+        if inst is None:
+            return
+        inst.variables = dict(variables)
         self._save()
 
     def unregister(self, service: str, node: str) -> None:

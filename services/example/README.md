@@ -18,7 +18,7 @@
 | `stop.script` | string | 否 | 自定义停止脚本；缺省时按 PID 文件 kill（`stop.timeout` 秒后强杀） |
 | `stop.timeout` | number | 否 | 默认 kill 方式的等待秒数，默认 10 |
 | `deploy.files` | string[] | 否 | 需下发到节点的文件（支持 glob）；缺省 = 全部文件（`service.json`、隐藏文件除外）。**注意 README.md 等说明文件不应列入** |
-| `variables` | object | 否 | 默认环境变量（注入 start.sh），启动任务时可覆盖 |
+| `variables` | object | 否 | 默认环境变量（注入 start.sh），启动任务时可覆盖；创建实例时与覆盖值合并冻结为实例快照，后续启动/重启沿用 |
 
 ## 节点上的目录布局
 
