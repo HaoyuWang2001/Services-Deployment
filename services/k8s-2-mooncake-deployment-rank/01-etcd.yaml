@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mooncake-etcd
+  namespace: ${MOONCAKE_NAMESPACE}
+  labels:
+    app: mooncake-etcd
+spec:
+  type: ClusterIP
+  selector:
+    app: mooncake-etcd
+  ports:
+    - name: client
+      port: 17779
+      targetPort: 17779
+      protocol: TCP
+    - name: peer
+      port: 17780
+      targetPort: 17780
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mooncake-etcd
+  namespace: ${MOONCAKE_NAMESPACE}
+  labels:
+    app: mooncake-etcd
+spec:
+  serviceName: mooncake-etcd
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mooncake-etcd
+  template:
+    metadata:
+      labels:
+        app: mooncake-etcd
+        role: etcd
+    spec:
+      hostNetwork: false
+      terminationGracePeriodSeconds: 5
+      containers:
+        - name: etcd
+          image: ${MOONCAKE_IMAGE}
+          imagePullPolicy: Never
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "--- Starting etcd ---"
+              exec /home/mooncake/scripts/k8s-start-etcd.sh
+          ports:
+            - name: client
+              containerPort: 17779
+              protocol: TCP
+            - name: peer
+              containerPort: 17780
+              protocol: TCP
+          securityContext:
+            privileged: false
+            capabilities:
+              add:
+                - SYS_ADMIN
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 17779
+              scheme: HTTP
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 17779
+              scheme: HTTP
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 17779
+              scheme: HTTP
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: host-ping
+              mountPath: /usr/sbin/ping
+              readOnly: true
+            - name: mooncake-logs
+              mountPath: /var/log/mooncake/etcd
+            - name: startup-scripts
+              mountPath: /home/mooncake/scripts
+              readOnly: true
+      volumes:
+        - name: host-ping
+          hostPath:
+            path: /usr/sbin/ping
+            type: File
+        - name: mooncake-logs
+          hostPath:
+            path: ${MOONCAKE_LOG_PATH}/etcd
+            type: DirectoryOrCreate
+        - name: startup-scripts
+          configMap:
+            name: mooncake-startup-scripts
+            defaultMode: 0755

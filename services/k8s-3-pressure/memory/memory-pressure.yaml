@@ -1,0 +1,190 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa0
+  labels:
+    app: memory-pressure
+    numa: "0"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "0"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "0"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 0 -m 0 /home/stream_bandwidth 0 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+            limits:
+              cpu: "4"
+              memory: 32Gi
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa1
+  labels:
+    app: memory-pressure
+    numa: "1"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "1"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "1"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 1 -m 1 /home/stream_bandwidth 1 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+            limits:
+              cpu: "4"
+              memory: 32Gi
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa2
+  labels:
+    app: memory-pressure
+    numa: "2"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "2"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "2"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 2 -m 2 /home/stream_bandwidth 2 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+            limits:
+              cpu: "4"
+              memory: 32Gi
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa3
+  labels:
+    app: memory-pressure
+    numa: "3"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "3"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "3"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 3 -m 3 /home/stream_bandwidth 3 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 32Gi
+            limits:
+              cpu: "4"
+              memory: 32Gi
+          terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
