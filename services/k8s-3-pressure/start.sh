@@ -44,6 +44,8 @@ export CPU_SCAN_INTERVAL=10
 # ============================================================================
 
 export MEMORY_NAMESPACE="mooncake-memory-pressure"
+export MEMORY_ROLLOUT_TIMEOUT="180s"
+export MEMORY_DELETE_TIMEOUT="90s"
 
 # ============================================================================
 # Allow This File to Be Sourced by stop.sh
@@ -147,15 +149,43 @@ main() {
     echo
     echo "============================================================"
 
-    if [[ "$failed" -eq 0 ]]; then
-        echo "CPU + Memory Pressure started successfully."
-    else
+    if [[ "$failed" -gt 0 ]]; then
         echo "CPU + Memory Pressure started with $failed failure(s)."
+        echo "Rolling back partially started pressure workloads..."
+
+        bash "$CPU_MANAGER" stop || true
+        bash "$MEMORY_MANAGER" stop || true
+
+        echo "============================================================"
+        return 1
     fi
 
+    echo "CPU + Memory Pressure started successfully."
     echo "============================================================"
+    echo
+    echo "Pressure workloads are active. Waiting for a stop request..."
 
-    return "$((failed > 0 ? 1 : 0))"
+    # Services-Deployment treats a naturally exiting start script as a completed
+    # service and automatically invokes stop.sh. Keep this process in the
+    # foreground so the pressure remains active until the platform stops the
+    # service process group and then runs stop.sh explicitly.
+    local keepalive_pid=""
+
+    shutdown() {
+        echo "Stop signal received."
+        if [[ -n "$keepalive_pid" ]]; then
+            kill "$keepalive_pid" 2>/dev/null || true
+        fi
+        exit 0
+    }
+
+    trap shutdown TERM INT
+
+    while true; do
+        sleep 3600 &
+        keepalive_pid=$!
+        wait "$keepalive_pid" || true
+    done
 }
 
 main "$@"

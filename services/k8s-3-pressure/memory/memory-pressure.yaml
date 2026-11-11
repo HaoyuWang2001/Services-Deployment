@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: memory-pressure-numa0
-  namespace: memory-pressure
   labels:
     app: memory-pressure
     numa: "0"
@@ -36,13 +35,21 @@ spec:
               cpu: "4"
               memory: 16Gi
           terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
 
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: memory-pressure-numa1
-  namespace: memory-pressure
   labels:
     app: memory-pressure
     numa: "1"
@@ -76,13 +83,21 @@ spec:
               cpu: "4"
               memory: 16Gi
           terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
 
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: memory-pressure-numa2
-  namespace: memory-pressure
   labels:
     app: memory-pressure
     numa: "2"
@@ -116,13 +131,21 @@ spec:
               cpu: "4"
               memory: 16Gi
           terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File
 
 ---
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: memory-pressure-numa3
-  namespace: memory-pressure
   labels:
     app: memory-pressure
     numa: "3"
@@ -156,3 +179,12 @@ spec:
               cpu: "4"
               memory: 16Gi
           terminationMessagePolicy: File
+          volumeMounts:
+            - name: stream-bandwidth
+              mountPath: /home/stream_bandwidth
+              readOnly: true
+      volumes:
+        - name: stream-bandwidth
+          hostPath:
+            path: /home/w00921547/downloads/stream_bandwidth
+            type: File

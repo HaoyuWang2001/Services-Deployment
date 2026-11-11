@@ -1,6 +1,6 @@
 {
   "name": "k8s-3-pressure",
-  "description": "编译mooncake及whl包，并发布到四节点上，完成whl安装",
+  "description": "在 Mooncake Pod 中施加 CPU 压力，并在 Kubernetes 节点上部署 NUMA 内存带宽压力",
   "nodes": [
     "k8s-controller-16nodes"
   ],

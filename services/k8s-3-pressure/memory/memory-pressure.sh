@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
@@ -21,9 +20,11 @@ set -Eeuo pipefail
 # Configuration
 # ============================================================================
 
-KUBECTL_BIN="kubectl"
+KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 
-NAMESPACE="default"
+MEMORY_NAMESPACE="${MEMORY_NAMESPACE:-mooncake-memory-pressure}"
+MEMORY_ROLLOUT_TIMEOUT="${MEMORY_ROLLOUT_TIMEOUT:-180s}"
+MEMORY_DELETE_TIMEOUT="${MEMORY_DELETE_TIMEOUT:-90s}"
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -169,8 +170,6 @@ build_kubectl_args() {
     if [[ -n "$CONTEXT" ]]; then
         KUBECTL_ARGS+=(--context "$CONTEXT")
     fi
-
-    KUBECTL_ARGS+=(--namespace "$NAMESPACE")
 }
 
 # ============================================================================
@@ -180,25 +179,69 @@ build_kubectl_args() {
 start() {
     log "Starting Memory Pressure..."
     log "Context:   ${CONTEXT:-current-context}"
-    log "Namespace: $NAMESPACE"
+    log "Namespace: $MEMORY_NAMESPACE"
     log "Manifest:  $MANIFEST"
     log "Target:    All eligible Kubernetes nodes"
 
-    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" apply -f "$MANIFEST"; then
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" create namespace \
+        "$MEMORY_NAMESPACE" --dry-run=client -o yaml | \
+        "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" apply -f -; then
+
+        error "Failed to create or update Namespace: $MEMORY_NAMESPACE"
+        return 1
+    fi
+
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" apply -f "$MANIFEST"; then
+
         error "Failed to deploy Memory Pressure DaemonSets."
         return 1
     fi
 
-    log "Memory Pressure DaemonSets deployed successfully."
+    log "Waiting for Memory Pressure DaemonSets to become ready..."
+
+    local ds
+    local counts
+    local desired
+    local ready
+
+    for ds in "${DAEMONSETS[@]}"; do
+        if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+            --namespace "$MEMORY_NAMESPACE" rollout status \
+            "daemonset/$ds" --timeout="$MEMORY_ROLLOUT_TIMEOUT"; then
+
+            error "DaemonSet did not become ready: $ds"
+            return 1
+        fi
+
+        counts="$(
+            "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+                --namespace "$MEMORY_NAMESPACE" get daemonset "$ds" \
+                -o jsonpath='{.status.desiredNumberScheduled}{" "}{.status.numberReady}'
+        )" || return 1
+
+        read -r desired ready <<< "$counts"
+        desired="${desired:-0}"
+        ready="${ready:-0}"
+
+        if [[ "$desired" -lt 1 || "$ready" -ne "$desired" ]]; then
+            error "DaemonSet is not fully ready: $ds (desired=$desired, ready=$ready)"
+            return 1
+        fi
+    done
+
+    log "Memory Pressure DaemonSets deployed and ready."
 
     echo
     log "DaemonSet status:"
-    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get daemonsets \
+    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" get daemonsets \
         -l app=memory-pressure
 
     echo
     log "Memory Pressure Pods:"
-    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get pods \
+    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" get pods \
         -l app=memory-pressure \
         -o wide
 }
@@ -210,48 +253,22 @@ start() {
 
 stop() {
     log "Stopping Memory Pressure..."
+    log "Context:   ${CONTEXT:-current-context}"
     log "Namespace: $MEMORY_NAMESPACE"
 
-    if ! "$KUBECTL_BIN" get namespace "$MEMORY_NAMESPACE" \
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        get namespace "$MEMORY_NAMESPACE" \
         >/dev/null 2>&1; then
 
         log "Namespace does not exist. Nothing to stop."
         return 0
     fi
 
-    # ------------------------------------------------------------------------
-    # Delete DaemonSets
-    # ------------------------------------------------------------------------
-
-    local failed=0
-
-    for ds in "${DAEMONSETS[@]}"; do
-        log "Deleting DaemonSet: $ds"
-
-        if ! "$KUBECTL_BIN" delete daemonset "$ds" \
-            -n "$MEMORY_NAMESPACE" \
-            --ignore-not-found=true \
-            --wait=true; then
-
-            error "Failed to delete DaemonSet: $ds"
-            failed=$((failed + 1))
-        fi
-    done
-
-    if [[ "$failed" -gt 0 ]]; then
-        error "$failed DaemonSet(s) failed to delete."
-        error "Namespace will be retained for safety."
-        return 1
-    fi
-
-    # ------------------------------------------------------------------------
-    # Delete Namespace
-    # ------------------------------------------------------------------------
-
     log "Deleting Namespace: $MEMORY_NAMESPACE"
 
-    if ! "$KUBECTL_BIN" delete namespace "$MEMORY_NAMESPACE" \
-        --wait=true; then
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        delete namespace "$MEMORY_NAMESPACE" \
+        --wait=true --timeout="$MEMORY_DELETE_TIMEOUT"; then
 
         error "Failed to delete Namespace: $MEMORY_NAMESPACE"
         return 1
@@ -270,26 +287,29 @@ stop() {
 status() {
     log "Memory Pressure Status"
     log "Context:   ${CONTEXT:-current-context}"
-    log "Namespace: $NAMESPACE"
+    log "Namespace: $MEMORY_NAMESPACE"
 
     echo
     log "========== DaemonSets =========="
 
-    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get daemonsets \
+    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" get daemonsets \
         -l app=memory-pressure \
         -o wide
 
     echo
     log "========== Pods =========="
 
-    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get pods \
+    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" get pods \
         -l app=memory-pressure \
         -o wide
 
     echo
     log "========== Pod Distribution =========="
 
-    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get pods \
+    "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" get pods \
         -l app=memory-pressure \
         -o custom-columns='NAME:.metadata.name,NODE:.spec.nodeName,NUMA:.metadata.labels.numa,STATUS:.status.phase,READY:.status.containerStatuses[0].ready'
 }

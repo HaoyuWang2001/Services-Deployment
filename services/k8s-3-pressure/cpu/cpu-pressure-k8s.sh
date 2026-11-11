@@ -41,6 +41,7 @@ CPU_SCAN_INTERVAL="${CPU_SCAN_INTERVAL:-10}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CPU_SCRIPT_SOURCE="${SCRIPT_DIR}/cpu-pressure.sh"
+MONITOR_SCRIPT="${SCRIPT_DIR}/cpu-pressure-k8s.sh"
 
 # ============================================================================
 # Logging
@@ -355,6 +356,11 @@ scan_pods() {
         return 1
     fi
 
+    if [[ "$action" == "start" && "$succeeded" -eq 0 ]]; then
+        error "No running target Pod accepted CPU pressure."
+        return 1
+    fi
+
     return 0
 }
 
@@ -369,9 +375,34 @@ is_monitor_running() {
     kill -0 "$pid" 2>/dev/null || return 1
 
     local state
-    state="$(ps -p "$pid" -o stat= 2>/dev/null | xargs || true)"
+    if [[ -r "/proc/$pid/stat" ]]; then
+        state="$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | awk '{print $1}')"
+    else
+        state="$(ps -p "$pid" -o stat= 2>/dev/null | xargs || true)"
+    fi
 
-    [[ -n "$state" && "$state" != Z* ]]
+    [[ -n "$state" && "$state" != Z* ]] || return 1
+
+    # A PID file can outlive its process. Verify the complete argv so a reused
+    # PID is never treated as this monitor or killed by stop_monitor().
+    local arg
+    local found_script=0
+    local found_action=0
+
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        while IFS= read -r arg; do
+            [[ "$arg" == "$MONITOR_SCRIPT" ]] && found_script=1
+            [[ "$arg" == "_monitor" ]] && found_action=1
+        done < <(tr '\0' '\n' < "/proc/$pid/cmdline")
+    else
+        # Fallback for Unix-compatible environments without a mounted /proc.
+        local command_line
+        command_line="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        [[ "$command_line" == *"$MONITOR_SCRIPT"* ]] && found_script=1
+        [[ "$command_line" == *" _monitor"* ]] && found_action=1
+    fi
+
+    [[ "$found_script" -eq 1 && "$found_action" -eq 1 ]]
 }
 
 monitor_loop() {
@@ -408,9 +439,16 @@ start_monitor() {
         rm -f "$CPU_MONITOR_PID_FILE"
     fi
 
+    log "Running initial CPU pressure scan..."
+
+    if ! scan_pods start; then
+        error "Initial CPU pressure scan failed; monitor was not started."
+        return 1
+    fi
+
     log "Starting CPU pressure monitor..."
 
-    nohup bash "$SCRIPT_DIR/$(basename "$0")" _monitor \
+    nohup bash "$MONITOR_SCRIPT" _monitor \
         >> "$CPU_MONITOR_LOG_FILE" 2>&1 < /dev/null &
 
     local pid=$!
