@@ -131,7 +131,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import PageHeader from '../components/PageHeader.vue'
@@ -311,7 +311,7 @@ function openPortQuery() {
   portQueryVisible.value = true
 }
 
-onMounted(load)
+onActivated(load)
 </script>
 
 <style scoped>

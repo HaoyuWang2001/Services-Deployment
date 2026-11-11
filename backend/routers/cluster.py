@@ -13,6 +13,8 @@ router = APIRouter(prefix="/api/cluster", tags=["cluster"])
 
 @router.get("/nodes")
 async def list_nodes(store: ConfigStore = Depends(get_store)):
+    # 每次查询都热重读 cluster.json：浏览器刷新即可拿到最新节点（失败保留上次可用配置）
+    store.reload_cluster()
     return {
         "nodes": [n.model_dump() for n in store.cluster.resolved],
         "error": store.cluster_error,

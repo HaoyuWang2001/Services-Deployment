@@ -124,6 +124,33 @@ def test_clusterconfig_node_lookup():
     assert cfg.node("nope") is None
 
 
+def test_reload_cluster_hot_reload_and_keep_last_good(tmp_path):
+    """GET /nodes 场景：热重读 cluster.json；失败时保留上次可用配置。"""
+    from backend.config import ConfigStore
+    cluster = _write(tmp_path, "cluster.json",
+                     {"nodes": [{"name": "n1", "ip": "1.1.1.1"}]})
+    store = ConfigStore(cluster_path=cluster, services_dir=tmp_path / "services")
+    assert store.cluster.node("n1") is not None
+
+    # 文件变更 → 热重载生效（不动服务）
+    _write(tmp_path, "cluster.json",
+           {"nodes": [{"name": "n1", "ip": "1.1.1.1"}, {"name": "n2", "ip": "2.2.2.2"}]})
+    store.reload_cluster()
+    assert store.cluster.node("n2") is not None
+    assert store.cluster_error is None
+
+    # 写坏 JSON → 保留上次可用配置并记录错误
+    cluster.write_text("{bad json", encoding="utf-8")
+    store.reload_cluster()
+    assert store.cluster.node("n1") is not None and store.cluster.node("n2") is not None
+    assert store.cluster_error
+
+    # 全量 reload（启动语义）失败时清空到空配置
+    store.reload()
+    assert store.cluster.resolved == []
+    assert store.cluster_error
+
+
 # ------------------------------------------------------------ 写回/重载 ----
 def test_save_service_json_roundtrip(tmp_path):
     from backend.config import save_service_json

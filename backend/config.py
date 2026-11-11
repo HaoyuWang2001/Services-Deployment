@@ -274,16 +274,25 @@ class ConfigStore:
         self.reload()
 
     def reload(self) -> None:
+        self.reload_cluster(reset_on_error=True)
+        self.services, self.service_errors = load_services(self.services_dir)
+        log.info("配置已加载: %d 节点, %d 服务, %d 服务错误",
+                 len(self.cluster.nodes), len(self.services), len(self.service_errors))
+
+    def reload_cluster(self, reset_on_error: bool = False) -> None:
+        """仅重读 cluster.json（不动服务配置）。
+
+        默认失败时保留上次可用节点配置并记录 cluster_error（页面刷新场景）；
+        启动时的全量 reload 传入 reset_on_error=True 以清空到空配置。
+        """
         try:
             self.cluster = load_cluster(self.cluster_path)
             self.cluster_error = None
         except Exception as e:  # noqa: BLE001
-            self.cluster = ClusterConfig()
+            if reset_on_error:
+                self.cluster = ClusterConfig()
             self.cluster_error = str(e)
             log.warning("cluster.json 加载失败: %s", e)
-        self.services, self.service_errors = load_services(self.services_dir)
-        log.info("配置已加载: %d 节点, %d 服务, %d 服务错误",
-                 len(self.cluster.nodes), len(self.services), len(self.service_errors))
 
     def node(self, name: str) -> Node:
         node = self.cluster.node(name)
