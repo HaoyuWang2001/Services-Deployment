@@ -288,8 +288,9 @@ def test_stop_and_delete_allowed_after_service_deleted(tmp_path, monkeypatch):
         captured["status_cfg"] = svc_cfg
         return executor.ServiceStatus("running", pid=1)
 
-    async def fake_stop(pool, node, svc_cfg, run_id=None):
+    async def fake_stop(pool, node, svc_cfg, run_id=None, variables=None):
         captured["stop_cfg"] = svc_cfg
+        captured["stop_vars"] = variables
         return "stopped"
 
     monkeypatch.setattr(executor, "service_status", fake_status)
@@ -302,6 +303,7 @@ def test_stop_and_delete_allowed_after_service_deleted(tmp_path, monkeypatch):
     assert sub.status == "success", sub.error
     assert captured["stop_cfg"].workspace == "/data/svc"
     assert captured["stop_cfg"].start.log == "svc.log"
+    assert captured["stop_vars"] == {}   # 无变量快照 → 服务已删，无默认值可回退
 
     # 删除（运行中 → 链接停止 → 注销）
     tm.instances.set_state("svc", "n1", "running")
@@ -350,3 +352,58 @@ def test_refresh_uses_snapshot_and_backfills(tmp_path, monkeypatch):
     row = out[0]
     assert row["status"] == "running"
     assert "已删除" in row["note"]
+
+
+def test_stop_injects_instance_variable_snapshot(tmp_path, monkeypatch):
+    """手动停止注入实例变量快照（与启动/自动清理一致）。"""
+    import asyncio
+    from backend import executor
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l",
+                        variables={"A": "1", "B": "9"}, cfg=svc)
+    captured = {}
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("running", pid=1)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None, variables=None):
+        captured["vars"] = variables
+        return "stopped"
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t1", service="svc", action="stop", nodes=["n1"]),
+                                svc, "n1", sub))
+    assert sub.status == "success", sub.error
+    assert captured["vars"] == {"A": "1", "B": "9"}
+
+
+def test_stop_legacy_instance_falls_back_to_service_variables(tmp_path, monkeypatch):
+    """旧实例（无变量快照）手动停止回退 service.json 默认变量。"""
+    import asyncio
+    from backend import executor
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)   # variables={}
+    captured = {}
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("running", pid=1)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None, variables=None):
+        captured["vars"] = variables
+        return "stopped"
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t1", service="svc", action="stop", nodes=["n1"]),
+                                svc, "n1", sub))
+    assert sub.status == "success", sub.error
+    assert captured["vars"] == {"A": "1"}   # service.json 默认变量

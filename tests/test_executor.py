@@ -149,6 +149,14 @@ def test_stop_script_command():
     assert cmd == "cd /data/mooncake/master && bash stop.sh"
 
 
+def test_stop_script_command_with_variables():
+    """手动停止同样注入变量（与启动一致），特殊字符安全引用。"""
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    assert build_stop_script_command(svc) == "cd /data/mooncake/master && bash stop.sh"
+    cmd = build_stop_script_command(svc, {"A": "1", "B": "x y"})
+    assert cmd == "cd /data/mooncake/master && env A=1 B='x y' bash stop.sh"
+
+
 def test_status_command_tick_check():
     cmd = build_status_command(make_svc())
     assert "read pid tick < run/mooncake-master.pid" in cmd

@@ -338,7 +338,9 @@ class TaskManager:
                     run_id = inst.run_id
                     self.instances.set_state(task.service, node_name, "stopping")
                     try:
-                        out = await executor.stop_service(self.pool, node, svc_cfg, run_id=run_id)
+                        out = await executor.stop_service(
+                            self.pool, node, svc_cfg, run_id=run_id,
+                            variables=self._stop_vars(inst, service))
                         sub.detail = out
                         self.instances.set_state(task.service, node_name, "stopped")
                         self.instances.set_stop_result(task.service, node_name, "ok")
@@ -378,7 +380,9 @@ class TaskManager:
                     # ① 停止阶段（完整管线：组杀 + stop.sh + 日志）
                     self.instances.set_state(service.name, node_name, "stopping")
                     try:
-                        out = await executor.stop_service(self.pool, node, service, run_id=run_id)
+                        out = await executor.stop_service(
+                            self.pool, node, service, run_id=run_id,
+                            variables=self._stop_vars(inst, service))
                     except executor.ExecError as e:
                         msg = str(e)
                         if "stop.sh 失败" in msg:
@@ -428,7 +432,8 @@ class TaskManager:
                             self.instances.set_state(task.service, node_name, "stopping")
                             try:
                                 out = await executor.stop_service(
-                                    self.pool, node, svc_cfg, run_id=inst.run_id)
+                                    self.pool, node, svc_cfg, run_id=inst.run_id,
+                                    variables=self._stop_vars(inst, service))
                             except executor.ExecError as e:
                                 msg = str(e)
                                 if "stop.sh 失败" in msg:
@@ -548,6 +553,13 @@ class TaskManager:
             return list(inst.args), None
         merged = [*service.start.args, *task.args]
         return merged, (merged if task.args else None)
+
+    @staticmethod
+    def _stop_vars(inst, service: ServiceConfig | None) -> dict[str, str]:
+        """停止时注入的变量：实例快照优先，空则回退当前 service 默认值（旧实例）。"""
+        if inst.variables:
+            return dict(inst.variables)
+        return dict(service.variables) if service is not None else {}
 
     @staticmethod
     def _frozen_config(inst) -> ServiceConfig:

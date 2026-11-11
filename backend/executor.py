@@ -146,9 +146,14 @@ def build_kill_stop_command(service: ServiceConfig, logfile: Optional[str] = Non
     )
 
 
-def build_stop_script_command(service: ServiceConfig) -> str:
+def build_stop_script_command(service: ServiceConfig,
+                              variables: dict[str, str] | None = None) -> str:
+    """停止脚本命令；注入变量（实例快照）与启动时的环境保持一致。"""
     ws = shell_ws(service.workspace)
-    return f"cd {ws} && bash {shlex.quote(service.stop.script)}"
+    env = ""
+    if variables:
+        env = "env " + " ".join(f"{k}={shlex.quote(str(v))}" for k, v in variables.items()) + " "
+    return f"cd {ws} && {env}bash {shlex.quote(service.stop.script)}"
 
 
 def build_clean_command(service: ServiceConfig, dirs: list[str]) -> str:
@@ -422,7 +427,8 @@ async def create_dirs(pool: SSHPool, node: Node, service: ServiceConfig, run_id:
 
 
 async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
-                       run_id: Optional[str] = None) -> str:
+                       run_id: Optional[str] = None,
+                       variables: Optional[dict[str, str]] = None) -> str:
     """停止实例：先系统整组终止进程（进程终止由系统负责），成功后执行 stop.sh 应用清理。
 
     run_id 提供时全过程写入实例日志文件：停止分隔符 → "$ kill" 提示行与输出
@@ -468,11 +474,13 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
 
     if service.stop.script:
         hint = f"\\$ bash {shlex.quote(service.stop.script)}"
+        if variables:
+            hint += f"（变量 {len(variables)} 个）"
         code_ref = codes_ref = None
         if run_id:
             code_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_code")
             codes_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_codes.log")
-        res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint,
+        res = await pool.run(node, wrap(build_stop_script_command(service, variables), hint=hint,
                                         code_ref=code_ref, codes_ref=codes_ref),
                              timeout=120)
         if not res.ok:
