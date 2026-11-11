@@ -22,6 +22,7 @@ spec:
       port: 17703
       targetPort: 17703
       protocol: TCP
+
 ---
 apiVersion: apps/v1
 kind: Deployment
