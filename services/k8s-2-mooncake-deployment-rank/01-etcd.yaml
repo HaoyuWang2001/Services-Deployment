@@ -18,6 +18,7 @@ spec:
       port: 17780
       targetPort: 17780
       protocol: TCP
+
 ---
 apiVersion: apps/v1
 kind: StatefulSet
