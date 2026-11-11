@@ -57,11 +57,11 @@ spec:
           resources:
             requests:
               cpu: "8"
-              memory: 16Gi
+              memory: 64Gi
               unifiedbus.com/ub_net_device: 1
             limits:
               cpu: "8"
-              memory: 16Gi
+              memory: 64Gi
               unifiedbus.com/ub_net_device: 1
           startupProbe:
             tcpSocket:

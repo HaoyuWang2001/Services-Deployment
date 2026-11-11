@@ -123,7 +123,7 @@ exec "${MOONCAKE_MASTER}" \
   --vsegment_auto_plan=true \
   --vsegment_member_count=4 \
   --vsegment_stripe_size=2097152 \
-  --vsegment_member_extent_size=2013265920 \
+  --vsegment_member_extent_size=402653184 \
   --vsegment_reserved_ratio=0 \
   --io_pattern_cold_eviction=false \
   --io_pattern_tier_down_bytes_per_cycle=0 \
