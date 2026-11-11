@@ -1,116 +1,158 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: mooncake-etcd
-  namespace: ${MOONCAKE_NAMESPACE}
-  labels:
-    app: mooncake-etcd
-spec:
-  type: ClusterIP
-  selector:
-    app: mooncake-etcd
-  ports:
-    - name: client
-      port: 17779
-      targetPort: 17779
-      protocol: TCP
-    - name: peer
-      port: 17780
-      targetPort: 17780
-      protocol: TCP
----
 apiVersion: apps/v1
-kind: StatefulSet
+kind: DaemonSet
 metadata:
-  name: mooncake-etcd
-  namespace: ${MOONCAKE_NAMESPACE}
+  name: memory-pressure-numa0
+  namespace: memory-pressure
   labels:
-    app: mooncake-etcd
+    app: memory-pressure
+    numa: "0"
 spec:
-  serviceName: mooncake-etcd
-  replicas: 1
   selector:
     matchLabels:
-      app: mooncake-etcd
+      app: memory-pressure
+      numa: "0"
   template:
     metadata:
       labels:
-        app: mooncake-etcd
-        role: etcd
+        app: memory-pressure
+        numa: "0"
     spec:
-      hostNetwork: false
-      terminationGracePeriodSeconds: 5
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
       containers:
-        - name: etcd
-          image: ${MOONCAKE_IMAGE}
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
           imagePullPolicy: Never
           command:
-            - /bin/sh
+            - /bin/bash
             - -c
-            - |
-              echo "--- Starting etcd ---"
-              exec /home/mooncake/scripts/k8s-start-etcd.sh
-          ports:
-            - name: client
-              containerPort: 17779
-              protocol: TCP
-            - name: peer
-              containerPort: 17780
-              protocol: TCP
-          securityContext:
-            privileged: false
-            capabilities:
-              add:
-                - SYS_ADMIN
+            - exec numactl -N 0 -m 0 /home/stream_bandwidth 0 10 1 140
           resources:
             requests:
               cpu: "4"
-              memory: 8Gi
+              memory: 16Gi
             limits:
               cpu: "4"
-              memory: 8Gi
-          startupProbe:
-            httpGet:
-              path: /health
-              port: 17779
-              scheme: HTTP
-            periodSeconds: 5
-            failureThreshold: 60
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 17779
-              scheme: HTTP
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 17779
-              scheme: HTTP
-            periodSeconds: 5
-            timeoutSeconds: 3
-            failureThreshold: 3
-          volumeMounts:
-            - name: host-ping
-              mountPath: /usr/sbin/ping
-              readOnly: true
-            - name: mooncake-logs
-              mountPath: /var/log/mooncake/etcd
-            - name: startup-scripts
-              mountPath: /home/mooncake/scripts
-              readOnly: true
-      volumes:
-        - name: host-ping
-          hostPath:
-            path: /usr/sbin/ping
-            type: File
-        - name: mooncake-logs
-          hostPath:
-            path: ${MOONCAKE_LOG_PATH}/etcd
-            type: DirectoryOrCreate
-        - name: startup-scripts
-          configMap:
-            name: mooncake-startup-scripts
-            defaultMode: 0755
+              memory: 16Gi
+          terminationMessagePolicy: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa1
+  namespace: memory-pressure
+  labels:
+    app: memory-pressure
+    numa: "1"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "1"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "1"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 1 -m 1 /home/stream_bandwidth 1 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+          terminationMessagePolicy: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa2
+  namespace: memory-pressure
+  labels:
+    app: memory-pressure
+    numa: "2"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "2"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "2"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 2 -m 2 /home/stream_bandwidth 2 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+          terminationMessagePolicy: File
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: memory-pressure-numa3
+  namespace: memory-pressure
+  labels:
+    app: memory-pressure
+    numa: "3"
+spec:
+  selector:
+    matchLabels:
+      app: memory-pressure
+      numa: "3"
+  template:
+    metadata:
+      labels:
+        app: memory-pressure
+        numa: "3"
+    spec:
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: memory-pressure
+          image: docker.io/library/memory-pressure:latest
+          imagePullPolicy: Never
+          command:
+            - /bin/bash
+            - -c
+            - exec numactl -N 3 -m 3 /home/stream_bandwidth 3 10 1 140
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+          terminationMessagePolicy: File
