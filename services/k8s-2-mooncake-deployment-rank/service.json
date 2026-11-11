@@ -6,11 +6,11 @@
     "k8s-controller-16nodes"
   ],
   "allow_duplicate_start": false,
-  "workspace": "/home/w00921547/services/mooncake-k8s-allInOne",
+  "workspace": "/home/w00921547/services/k8s-2-mooncake-deployment-rank",
   "start": {
     "script": "start.sh",
     "args": [],
-    "log": "mooncake-k8s-allInOne.log"
+    "log": "k8s-2-mooncake-deployment-rank.log"
   },
   "stop": {
     "script": "stop.sh",
