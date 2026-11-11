@@ -1,17 +1,161 @@
 #!/usr/bin/env bash
-# 服务启动脚本模板
-# 说明：
-#   1. 运行时工作目录为 service.json 中的 workspace，本目录文件已全部下发到该目录
-#   2. 标准输出/错误由管理端重定向到 logs/<启动时间>/<日志文件名>，脚本内无需处理日志
-#   3. variables（含启动时覆盖值）以环境变量注入，例如 ${EXAMPLE_VAR}
-#   4. 管理端以 setsid 独立进程组启动本脚本，停止时会整组终止（脚本及其所有子进程），
-#      但仍【强烈建议】以 exec 形式启动真实服务（如下所示）：PID 精确、语义最干净
-#   5. 若脚本内需要服务后台运行（如 server & wait），停止同样有效，但避免再自行 setsid
-set -euo pipefail
+set -Eeuo pipefail
 
-echo "[$(date '+%F %T')] starting on $(hostname)"
-echo "EXAMPLE_VAR=${EXAMPLE_VAR:-unset}"
+###############################################################################
+# Kubernetes CPU + Memory Pressure
+#
+# Usage:
+#   ./start.sh
+###############################################################################
 
-# TODO: 替换为真实命令，例如：
-#   exec /opt/xxx/bin/xxx-server --port "${EXAMPLE_VAR}"
-exec tail -f /dev/null
+# ============================================================================
+# Script Directory
+# ============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ============================================================================
+# Kubernetes Configuration
+# ============================================================================
+
+export KUBECTL_BIN="kubectl"
+
+# Use the default Kubernetes context.
+# No --context argument will be passed.
+
+# ============================================================================
+# CPU Pressure Configuration
+# ============================================================================
+
+# Target namespaces, separated by comma.
+export CPU_NAMESPACES="mooncake-rank,mooncake-recall"
+
+# Target Pod name prefixes, separated by comma.
+export CPU_POD_PREFIXES="mooncake-store"
+
+# Empty means automatically select the only container in each Pod.
+export CPU_CONTAINER=""
+
+# CPU monitor scan interval (seconds).
+export CPU_SCAN_INTERVAL=10
+
+# ============================================================================
+# Memory Pressure Configuration
+# ============================================================================
+
+export MEMORY_NAMESPACE="mooncake-memory-pressure"
+
+# ============================================================================
+# Allow This File to Be Sourced by stop.sh
+# ============================================================================
+
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
+# ============================================================================
+# Module Paths
+# ============================================================================
+
+CPU_MANAGER="${SCRIPT_DIR}/cpu/cpu-pressure-k8s.sh"
+MEMORY_MANAGER="${SCRIPT_DIR}/memory/memory-pressure.sh"
+
+# ============================================================================
+# Environment Check
+# ============================================================================
+
+check_environment() {
+    if ! command -v "$KUBECTL_BIN" >/dev/null 2>&1; then
+        echo "ERROR: kubectl not found: $KUBECTL_BIN" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$CPU_MANAGER" ]]; then
+        echo "ERROR: CPU manager not found: $CPU_MANAGER" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$MEMORY_MANAGER" ]]; then
+        echo "ERROR: Memory manager not found: $MEMORY_MANAGER" >&2
+        return 1
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    check_environment
+
+    echo
+    echo "============================================================"
+    echo "Starting Kubernetes CPU + Memory Pressure"
+    echo "============================================================"
+
+    echo
+    echo "CPU Configuration:"
+    echo "  Namespaces:     $CPU_NAMESPACES"
+    echo "  Pod prefixes:   $CPU_POD_PREFIXES"
+    echo "  Container:      ${CPU_CONTAINER:-auto-select}"
+    echo "  Scan interval:  ${CPU_SCAN_INTERVAL}s"
+
+    echo
+    echo "Memory Configuration:"
+    echo "  Namespace:      $MEMORY_NAMESPACE"
+    echo "  NUMA nodes:     0, 1, 2, 3"
+    echo "  Bandwidth:      140 GB/s per NUMA"
+
+    local failed=0
+
+    # ------------------------------------------------------------------------
+    # Start CPU Pressure
+    # ------------------------------------------------------------------------
+
+    echo
+    echo "============================================================"
+    echo "Stage 1: Start CPU Pressure"
+    echo "============================================================"
+
+    if bash "$CPU_MANAGER" start; then
+        echo "CPU pressure monitor started successfully."
+    else
+        echo "ERROR: Failed to start CPU pressure monitor." >&2
+        failed=$((failed + 1))
+    fi
+
+    # ------------------------------------------------------------------------
+    # Start Memory Pressure
+    # ------------------------------------------------------------------------
+
+    echo
+    echo "============================================================"
+    echo "Stage 2: Start Memory Pressure"
+    echo "============================================================"
+
+    if bash "$MEMORY_MANAGER" start; then
+        echo "Memory pressure started successfully."
+    else
+        echo "ERROR: Failed to start Memory pressure." >&2
+        failed=$((failed + 1))
+    fi
+
+    # ------------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------------
+
+    echo
+    echo "============================================================"
+
+    if [[ "$failed" -eq 0 ]]; then
+        echo "CPU + Memory Pressure started successfully."
+    else
+        echo "CPU + Memory Pressure started with $failed failure(s)."
+    fi
+
+    echo "============================================================"
+
+    return "$((failed > 0 ? 1 : 0))"
+}
+
+main "$@"
