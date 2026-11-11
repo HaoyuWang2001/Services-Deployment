@@ -82,6 +82,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
           volumeMounts:
+            - name: host-stress-ng
+              mountPath: /home/stress-ng
+              readOnly: true
             - name: host-ping
               mountPath: /usr/sbin/ping
               readOnly: true
@@ -96,6 +99,10 @@ spec:
               subPath: k8s-run_mooncake_store_realclient_ha.sh
               readOnly: true
       volumes:
+        - name: host-stress-ng
+          hostPath:
+            path: /home/share/tools/stress-ng-0.17.07/stress-ng
+            type: File
         - name: host-ping
           hostPath:
             path: /usr/sbin/ping

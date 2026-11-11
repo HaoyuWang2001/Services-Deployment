@@ -30,10 +30,10 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
             limits:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
           terminationMessagePolicy: File
           volumeMounts:
             - name: stream-bandwidth
@@ -78,10 +78,10 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
             limits:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
           terminationMessagePolicy: File
           volumeMounts:
             - name: stream-bandwidth
@@ -126,10 +126,10 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
             limits:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
           terminationMessagePolicy: File
           volumeMounts:
             - name: stream-bandwidth
@@ -174,10 +174,10 @@ spec:
           resources:
             requests:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
             limits:
               cpu: "4"
-              memory: 16Gi
+              memory: 32Gi
           terminationMessagePolicy: File
           volumeMounts:
             - name: stream-bandwidth
