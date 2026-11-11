@@ -169,6 +169,23 @@ def test_status_command_tick_check():
     assert "exit_code" not in cmd
 
 
+def test_status_command_reads_deploy_status():
+    """探活命令顺带读取 run/deploy.status 心跳（RUNNING 两分支）。"""
+    cmd = build_status_command(make_svc())
+    assert "run/deploy.status" in cmd
+    assert cmd.count('echo "DEPLOY $d"') == 2
+    assert cmd.count('echo "DEPLOY -"') == 2
+
+
+def test_parse_status_deploy_state():
+    assert parse_status("RUNNING 123\nDEPLOY STARTING").deploy_state == "STARTING"
+    assert parse_status("RUNNING 123\nDEPLOY DEGRADED").deploy_state == "DEGRADED"
+    assert parse_status("RUNNING 123\nDEPLOY -").deploy_state == "-"
+    assert parse_status("RUNNING 123").deploy_state is None
+    # 非运行路径不输出 DEPLOY 行
+    assert parse_status("DEAD 1 rc=0 cc=-").deploy_state is None
+
+
 def test_status_command_with_run_id_reads_exit_code():
     cmd = build_status_command(make_svc(), run_id="20261025-120000")
     assert "logs/20261025-120000/exit_code" in cmd

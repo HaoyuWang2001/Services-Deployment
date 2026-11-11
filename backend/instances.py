@@ -4,7 +4,7 @@
   created → starting → running → (自行退出: exited) → stopping → stopped → deleting → 移除
   exited 按 exit_code 展示为 completed(0) / abnormal(≠0 或无码)
 展示状态集合：notdeployed / created / starting / running / stopping / stopped /
-  deleting / completed / abnormal / legacy / reused
+  deleting / completed / abnormal / legacy / reused / deploying / degraded
 """
 from __future__ import annotations
 
@@ -27,11 +27,12 @@ log = logging.getLogger("sd.instances")
 BASE_STATES = ("created", "starting", "running", "stopping", "stopped", "deleting", "exited")
 # 瞬态（任务执行期间，拒绝其它操作）
 TRANSIENT_STATES = ("starting", "stopping", "deleting")
-# 展示状态 → 允许的操作
-CAN_STOP = ("running", "abnormal", "completed")
+# 展示状态 → 允许的操作（deploying/degraded 为心跳派生态，进程均存活 → 同 running）
+CAN_STOP = ("running", "abnormal", "completed", "degraded", "deploying")
 CAN_START = ("created", "stopped", "completed", "notdeployed")
-CAN_RESTART = ("running",)  # 重启 = 链接 停止→启动，仅运行中
-CAN_DELETE = ("created", "stopped", "completed", "notdeployed", "running")  # running = 链接 停止→删除
+CAN_RESTART = ("running", "degraded", "deploying")  # 重启 = 链接 停止→启动
+CAN_DELETE = ("created", "stopped", "completed", "notdeployed",
+              "running", "degraded", "deploying")  # running = 链接 停止→删除
 
 
 def _now_iso() -> str:
@@ -74,10 +75,14 @@ class Instance(BaseModel):
         )
 
 
-def reconcile(reg_state: str, probe: str, exit_code: Optional[int]) -> str:
-    """registry 基础状态 + 探活结果 → 展示状态（纯函数）。
+def reconcile(reg_state: str, probe: str, exit_code: Optional[int],
+              deploy_state: Optional[str] = None) -> str:
+    """registry 基础状态 + 探活结果 + 部署心跳 → 展示状态（纯函数）。
 
     probe: service_status 原始状态（running/dead/legacy/reused/nopidfile/nows/unknown）
+    deploy_state: run/deploy.status 首 token（STARTING/READY/DEGRADED/-；None=无心跳）
+      STARTING → deploying（部署中）；DEGRADED → degraded（异常中，持续监测）；
+      其余（READY/-/None）→ running
     """
     if reg_state in TRANSIENT_STATES:
         return reg_state
@@ -86,6 +91,10 @@ def reconcile(reg_state: str, probe: str, exit_code: Optional[int]) -> str:
     if probe in ("legacy", "reused", "unknown"):
         return probe
     if probe == "running":
+        if deploy_state == "DEGRADED":
+            return "degraded"
+        if deploy_state == "STARTING":
+            return "deploying"
         return "running"  # 含 stopped/created 下检测到外部重启
     if probe == "dead":
         if reg_state == "stopped":
@@ -111,7 +120,8 @@ def cleanup_display(display_state: str, stop_result: str,
     """
     if display_state == "stopping":
         return "running"  # 执行中
-    if display_state in ("created", "starting", "running", "notdeployed"):
+    if display_state in ("created", "starting", "running", "notdeployed",
+                         "deploying", "degraded"):
         return "none"
     if display_state == "stopped" and stop_result not in ("none", ""):
         return stop_result  # ok / failed:N / killfail
@@ -273,7 +283,7 @@ class InstanceRegistry:
                 d["note"] = "服务配置已删除（实例仍可停止/删除）"
                 svc = inst.as_service_config()
             st = await executor.service_status(pool, node, svc, inst.run_id)
-            display = reconcile(inst.state, st.state, st.exit_code)
+            display = reconcile(inst.state, st.state, st.exit_code, st.deploy_state)
             # 自动落库：running 检测到死亡 → exited；exited 检测到复活（外部重启）→ running
             if inst.state == "running" and display in ("completed", "abnormal"):
                 self.set_state(inst.service, inst.node, "exited")
@@ -281,6 +291,7 @@ class InstanceRegistry:
                 self.set_state(inst.service, inst.node, "running")
             d["status"] = display
             d["probe_pid"] = st.pid
+            d["deploy_state"] = st.deploy_state if display in ("deploying", "degraded") else None
             d["exit_code"] = st.exit_code if display in ("completed", "abnormal") else None
             d["cleanup_status"] = cleanup_display(display, inst.stop_result, st.cleanup_code)
             return d

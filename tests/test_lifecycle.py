@@ -407,3 +407,22 @@ def test_stop_legacy_instance_falls_back_to_service_variables(tmp_path, monkeypa
                                 svc, "n1", sub))
     assert sub.status == "success", sub.error
     assert captured["vars"] == {"A": "1"}   # service.json 默认变量
+
+
+def test_refresh_surfaces_deploy_heartbeat(tmp_path, monkeypatch):
+    """运行中 + 心跳 DEGRADED/STARTING → 展示 degraded/deploying。"""
+    import asyncio
+    from backend import executor
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    tm.instances.set_state("svc", "n1", "running")
+
+    for heartbeat, expected in (("DEGRADED", "degraded"), ("STARTING", "deploying"),
+                                ("READY", "running"), ("-", "running")):
+        async def fake_status(pool, node, svc_cfg, run_id=None, _hb=heartbeat):
+            return executor.ServiceStatus("running", pid=1, deploy_state=_hb)
+        monkeypatch.setattr(executor, "service_status", fake_status)
+        out = asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+        assert out[0]["status"] == expected

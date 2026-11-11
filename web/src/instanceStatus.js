@@ -13,6 +13,8 @@ const STATUS_TYPE = {
   legacy: 'warning',
   reused: 'danger',
   unknown: 'info',
+  deploying: 'primary',
+  degraded: 'warning',
 }
 
 const STATUS_TEXT = {
@@ -28,6 +30,8 @@ const STATUS_TEXT = {
   legacy: '旧实例（需手动处理）',
   reused: 'PID复用',
   unknown: '未知',
+  deploying: '部署中',
+  degraded: '异常中',
 }
 
 export function statusType(s) {
@@ -66,10 +70,12 @@ export function cleanupText(c) {
 }
 
 // 批量按钮门禁集合（按钮要求全部选中实例符合）
-export const STOPPABLE = ['running', 'abnormal', 'completed']
+// deploying/degraded 为心跳派生态，进程存活 → 与 running 同门禁（不可启动）
+export const STOPPABLE = ['running', 'abnormal', 'completed', 'deploying', 'degraded']
 export const STARTABLE = ['created', 'stopped', 'completed', 'notdeployed']
-export const RESTARTABLE = ['running']
-export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed', 'running']
+export const RESTARTABLE = ['running', 'deploying', 'degraded']
+export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed',
+  'running', 'deploying', 'degraded']
 
 const ELIGIBLE_SETS = {
   start: STARTABLE, stop: STOPPABLE, restart: RESTARTABLE, delete: DELETABLE,

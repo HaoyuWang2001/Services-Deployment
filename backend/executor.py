@@ -210,6 +210,9 @@ def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -
                 f"echo DEAD $pid rc=$rc cc=$cc; exit 0; ")
     else:
         dead = "echo DEAD $pid rc=- cc=-; exit 0; "
+    # 部署状态心跳（start.sh 写入 run/deploy.status：STARTING/READY/DEGRADED|原因）
+    deploy_line = ('d=$(cut -d"|" -f1 run/deploy.status 2>/dev/null); '
+                   'if [ -n "$d" ]; then echo "DEPLOY $d"; else echo "DEPLOY -"; fi')
     return (
         f"cd {ws} 2>/dev/null || {{ echo NOWS; exit 0; }}; "
         f"if [ ! -f {pidfile} ]; then echo NOPIDFILE; exit 0; fi; "
@@ -218,8 +221,9 @@ def build_status_command(service: ServiceConfig, run_id: Optional[str] = None) -
         f"if ! kill -0 $pid 2>/dev/null && ! kill -0 -- -$pid 2>/dev/null; then {dead}fi; "
         f"if [ -z \"$tick\" ]; then echo LEGACY $pid; exit 0; fi; "
         f"if kill -0 $pid 2>/dev/null; then ctick=$({_TICK_CMD}); "
-        f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; else echo RUNNING $pid; fi; "
-        f"else echo RUNNING $pid; fi"
+        f"if [ \"$ctick\" != \"$tick\" ]; then echo REUSED $pid; "
+        f"else echo RUNNING $pid; {deploy_line}; fi; "
+        f"else echo RUNNING $pid; {deploy_line}; fi"
     )
 
 
@@ -263,6 +267,7 @@ class ServiceStatus:
     pid: Optional[int] = None
     exit_code: Optional[int] = None     # 最近一次 start.sh 退出码（None = 未知/被终止）
     cleanup_code: Optional[int] = None  # 最近一次 stop.sh 退出码（自动或手动停止）
+    deploy_state: Optional[str] = None  # run/deploy.status：STARTING/READY/DEGRADED/-（None = 无该行）
 
 
 def parse_status(stdout: str) -> ServiceStatus:
@@ -271,11 +276,13 @@ def parse_status(stdout: str) -> ServiceStatus:
     exit_code = int(m.group(1)) if m else None
     m2 = re.search(r"cc=(\d+)", text)
     cleanup_code = int(m2.group(1)) if m2 else None
+    m3 = re.search(r"^DEPLOY (\S+)", text, re.MULTILINE)
+    deploy_state = m3.group(1) if m3 else None
     for prefix, state in (("RUNNING", "running"), ("DEAD", "dead"),
                           ("LEGACY", "legacy"), ("REUSED", "reused"),
                           ("NOPIDFILE", "nopidfile"), ("NOWS", "nows")):
         if text.startswith(prefix):
-            return ServiceStatus(state, _pid_of(text), exit_code, cleanup_code)
+            return ServiceStatus(state, _pid_of(text), exit_code, cleanup_code, deploy_state)
     return ServiceStatus("unknown")
 
 

@@ -51,21 +51,37 @@ def test_reconcile_nopidfile_probe():
 
 def test_gating_sets():
     from backend.instances import CAN_RESTART
-    assert set(CAN_STOP) == {"running", "abnormal", "completed"}
+    # deploying/degraded 为心跳派生态，进程存活 → 与 running 同门禁（不可启动）
+    assert set(CAN_STOP) == {"running", "abnormal", "completed", "degraded", "deploying"}
     assert set(CAN_START) == {"created", "stopped", "completed", "notdeployed"}
-    # 重启 = 链接 停止→启动，仅运行中
-    assert set(CAN_RESTART) == {"running"}
-    # running 允许删除（链接 停止→删除）；abnormal 不允许（须先停止归一）
-    assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed", "running"}
+    assert set(CAN_RESTART) == {"running", "degraded", "deploying"}
+    assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed",
+                               "running", "degraded", "deploying"}
     assert "abnormal" not in CAN_DELETE
     for t in TRANSIENT_STATES:
         assert t not in CAN_STOP and t not in CAN_START and t not in CAN_DELETE
         assert t not in CAN_RESTART
 
 
+def test_reconcile_deploy_heartbeat():
+    # 进程运行中 + 心跳状态 → deploying / degraded；其余一律 running
+    for base in ("created", "stopped", "exited", "running"):
+        assert reconcile(base, "running", None, "STARTING") == "deploying"
+        assert reconcile(base, "running", None, "DEGRADED") == "degraded"
+        assert reconcile(base, "running", None, "READY") == "running"
+        assert reconcile(base, "running", None, "-") == "running"
+        assert reconcile(base, "running", None, None) == "running"
+    # 心跳只影响 running 探活；死亡路径仍按退出码判定
+    assert reconcile("running", "dead", 0, "DEGRADED") == "completed"
+    assert reconcile("running", "dead", 7, "STARTING") == "abnormal"
+    assert reconcile("running", "legacy", None, "STARTING") == "legacy"
+
+
 def test_cleanup_display():
-    # 未执行 / 执行中
+    # 未执行 / 执行中（心跳两态同 running）
     assert cleanup_display("running", "none", None) == "none"
+    assert cleanup_display("deploying", "none", None) == "none"
+    assert cleanup_display("degraded", "none", None) == "none"
     assert cleanup_display("created", "none", 0) == "none"
     assert cleanup_display("stopping", "none", None) == "running"
     # exited：依节点 cleanup_code
