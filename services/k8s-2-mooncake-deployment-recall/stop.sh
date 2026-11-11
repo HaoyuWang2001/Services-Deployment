@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Must be consistent with start.sh
 ###############################################################################
 
-MOONCAKE_NAMESPACE="${MOONCAKE_NAMESPACE:-mooncake}"
+MOONCAKE_NAMESPACE="${MOONCAKE_NAMESPACE:-mooncake-recall}"
 
 # Namespace deletion timeout
 STOP_TIMEOUT="${STOP_TIMEOUT:-180}"
