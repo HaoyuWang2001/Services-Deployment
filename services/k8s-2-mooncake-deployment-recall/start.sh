@@ -3,12 +3,12 @@
 # Mooncake Kubernetes startup + health monitor
 #
 # Usage:
-#   chmod +x start-mooncake.sh
-#   ./start-mooncake.sh
+#   chmod +x start.sh
+#   ./start.sh
 #
 # Store scale:
-#   STORE_PER_NODE=1 ./start-mooncake.sh
-#   STORE_PER_NODE=2 ./start-mooncake.sh
+#   STORE_PER_NODE=1 ./start.sh
+#   STORE_PER_NODE=2 ./start.sh
 #
 # The script manages only Store DaemonSets carrying the
 # mooncake.openai.com/managed-by=start-mooncake label.
@@ -24,14 +24,14 @@ SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
 
 export MOONCAKE_NAMESPACE="${MOONCAKE_NAMESPACE:-mooncake-recall}"
 export MOONCAKE_IMAGE="${MOONCAKE_IMAGE:-mooncake-runtime-w00921547:${TAG:-latest}}"
-export MOONCAKE_LOG_PATH="${MOONCAKE_LOG_PATH:-/home/w00921547/mooncake-logs}"
+export MOONCAKE_LOG_PATH="${MOONCAKE_LOG_PATH:-/home/w00921547/mooncake-logs/recall}"
 export MOONCAKE_SCRIPT_CONFIGMAP="${MOONCAKE_SCRIPT_CONFIGMAP:-mooncake-startup-scripts}"
 
 # Master remains a Deployment. etcd remains a single-replica StatefulSet.
 MOONCAKE_MASTER_REPLICAS="${MOONCAKE_MASTER_REPLICAS:-1}"
 
 # Number of Store Pods per eligible Kubernetes Node.
-STORE_PER_NODE="${STORE_PER_NODE:-1}"
+STORE_PER_NODE="${STORE_PER_NODE:-2}"
 
 # Store DaemonSet metadata label used for safe scale-down cleanup.
 STORE_MANAGED_LABEL_KEY="mooncake.openai.com/managed-by"
@@ -523,14 +523,19 @@ print_workload_summary() {
 # ============================================================
 
 pause_for_manual_intervention() {
+    local reason="${1:-manual-intervention-required}"
+
+    # 单行标记：落入实例日志，便于检索挂起点
+    echo "SUSPENDED: ${reason}"
     echo
     echo "============================================================"
     ERROR "脚本已挂起，等待人工排查"
-    INFO "排查完成后，按 Ctrl+C 关闭脚本"
+    INFO "排查完成后，请通过部署工具「停止」实例（SIGTERM 优雅退出）"
     echo "============================================================"
 
-    trap 'echo; INFO "收到 Ctrl+C，脚本退出"; exit 130' INT
-    while true; do sleep 3600; done
+    # 1 秒粒度等待，确保组杀信号能及时触发（sleep 3600 会拖延 trap 执行）
+    trap 'echo; INFO "收到 SIGTERM/SIGINT，脚本退出"; exit 143' TERM INT
+    while true; do sleep 1; done
 }
 
 # ============================================================
@@ -556,7 +561,7 @@ while true; do
         fi
         if (( ELAPSED >= STARTUP_TIMEOUT )); then
             ERROR "启动等待超时：始终无法获取 Pod 状态"
-            pause_for_manual_intervention
+            pause_for_manual_intervention "启动等待超时：无法获取 Pod 状态"
         fi
         sleep "$STARTING_MONITOR_INTERVAL"
         continue
@@ -602,7 +607,7 @@ while true; do
     if [[ -n "$bad_pod" ]]; then
         IFS=$'\t' read -r pod reason <<< "$bad_pod"
         dump_pod "$pod" "$reason"
-        pause_for_manual_intervention
+        pause_for_manual_intervention "${pod}: ${reason}"
     fi
 
     if (( pod_count > 0 )); then
@@ -618,7 +623,7 @@ while true; do
         if [[ -n "$bad_pod" ]]; then
             IFS=$'\t' read -r pod reason <<< "$bad_pod"
             dump_pod "$pod" "$reason"
-            pause_for_manual_intervention
+            pause_for_manual_intervention "${pod}: ${reason}"
         fi
     fi
 
@@ -663,7 +668,7 @@ while true; do
         elif (( controller_status == 2 )); then
             WARN "无法获取 Controller 状态，可能是 Kubernetes API 不可用"
         fi
-        pause_for_manual_intervention
+        pause_for_manual_intervention "启动超时（${STARTUP_TIMEOUT}s）"
     fi
 
     sleep "$STARTING_MONITOR_INTERVAL"
@@ -694,7 +699,7 @@ while true; do
     if (( pod_count == 0 )); then
         ERROR "没有发现任何 Mooncake Pod！"
         kubectl get pods -n "${MOONCAKE_NAMESPACE}" -o wide || true
-        pause_for_manual_intervention
+        pause_for_manual_intervention "没有发现任何 Mooncake Pod"
     fi
 
     bad_pod="$(
@@ -717,7 +722,7 @@ while true; do
     if [[ -n "$bad_pod" ]]; then
         IFS=$'\t' read -r pod reason <<< "$bad_pod"
         dump_pod "$pod" "$reason"
-        pause_for_manual_intervention
+        pause_for_manual_intervention "${pod}: ${reason}"
     fi
 
     controller_status=0
@@ -735,7 +740,7 @@ while true; do
     if (( controller_status == 1 )); then
         ERROR "发现 Controller 异常！"
         print_workload_summary
-        pause_for_manual_intervention
+        pause_for_manual_intervention "Controller 异常"
     fi
 
     sleep "$RUNNING_MONITOR_INTERVAL"

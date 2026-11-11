@@ -67,11 +67,11 @@ spec:
             requests:
               cpu: "4"
               memory: 8Gi
-              unifiedbus.com/ub_net_device: "1"
+              unifiedbus.com/ub_net_device: 1
             limits:
               cpu: "4"
               memory: 8Gi
-              unifiedbus.com/ub_net_device: "1"
+              unifiedbus.com/ub_net_device: 1
           startupProbe:
             httpGet:
               path: /health
