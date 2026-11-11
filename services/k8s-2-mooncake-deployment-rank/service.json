@@ -1,0 +1,35 @@
+{
+  "name": "k8s-2-mooncake-deployment-rank",
+  "description": "部署mooncake k8s集群，包含etcd*1 master*1 store*1*N",
+  "nodes": [
+    "k8s-controller-2nodes",
+    "k8s-controller-16nodes"
+  ],
+  "allow_duplicate_start": false,
+  "workspace": "/home/w00921547/services/mooncake-k8s-allInOne",
+  "start": {
+    "script": "start.sh",
+    "args": [],
+    "log": "mooncake-k8s-allInOne.log"
+  },
+  "stop": {
+    "script": "stop.sh",
+    "timeout": 10
+  },
+  "deploy": {
+    "files": [
+      "start.sh",
+      "stop.sh",
+      "00-namespace.yaml",
+      "01-etcd.yaml",
+      "02-master.yaml",
+      "03-store-service.yaml",
+      "04-store-daemonset.yaml",
+      "scripts/"
+    ]
+  },
+  "variables": {
+    "TAG": "latest",
+    "MOONCAKE_NAMESPACE": "mooncake-rank"
+  }
+}

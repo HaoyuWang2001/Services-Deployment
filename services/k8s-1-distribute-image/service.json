@@ -1,0 +1,25 @@
+{
+  "name": "k8s-1-distribute-image",
+  "description": "从编译机copy镜像到k8s-controller，并发布镜像、加压组件至集群，加载主镜像、内存加压镜像和pause镜像",
+  "nodes": [
+    "k8s-controller-2nodes",
+    "k8s-controller-16nodes"
+  ],
+  "allow_duplicate_start": false,
+  "workspace": "/home/w00921547/Services-Deployment/k8s-1-distribute-image",
+  "start": {
+    "script": "distribute-image.sh",
+    "args": [],
+    "log": "distribute-image.log"
+  },
+  "stop": {
+    "timeout": 10
+  },
+  "deploy": {
+    "files": [
+      "distribute-image.sh",
+      "archives/"
+    ]
+  },
+  "variables": {}
+}
