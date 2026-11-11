@@ -45,7 +45,6 @@ export CPU_SCAN_INTERVAL=10
 
 export MEMORY_NAMESPACE="mooncake-memory-pressure"
 export MEMORY_ROLLOUT_TIMEOUT="180s"
-export MEMORY_DELETE_TIMEOUT="90s"
 
 # ============================================================================
 # Allow This File to Be Sourced by stop.sh

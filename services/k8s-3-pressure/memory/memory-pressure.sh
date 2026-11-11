@@ -24,7 +24,7 @@ KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 
 MEMORY_NAMESPACE="${MEMORY_NAMESPACE:-mooncake-memory-pressure}"
 MEMORY_ROLLOUT_TIMEOUT="${MEMORY_ROLLOUT_TIMEOUT:-180s}"
-MEMORY_DELETE_TIMEOUT="${MEMORY_DELETE_TIMEOUT:-90s}"
+READY_NODE_LABEL_KEY="mooncake.openai.com/memory-pressure-ready"
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -173,6 +173,58 @@ build_kubectl_args() {
 }
 
 # ============================================================================
+# Ready Node Selection
+# ============================================================================
+
+label_ready_nodes() {
+    local node_rows
+    local ready_nodes=()
+
+    node_rows="$(
+        "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" get nodes \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}'
+    )" || return 1
+
+    mapfile -t ready_nodes < <(
+        awk -F '\t' '$2 == "True" { print $1 }' <<< "$node_rows"
+    )
+
+    if [[ "${#ready_nodes[@]}" -eq 0 ]]; then
+        error "No Ready Kubernetes nodes found."
+        return 1
+    fi
+
+    # Clear stale eligibility first, then label only nodes that are Ready now.
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" label nodes --all \
+        "${READY_NODE_LABEL_KEY}-" --overwrite >/dev/null; then
+
+        error "Failed to clear stale Memory Pressure node labels."
+        return 1
+    fi
+
+    local node
+    for node in "${ready_nodes[@]}"; do
+        if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" label node "$node" \
+            "${READY_NODE_LABEL_KEY}=true" --overwrite >/dev/null; then
+
+            error "Failed to label Ready node: $node"
+            return 1
+        fi
+    done
+
+    log "Ready target nodes (${#ready_nodes[@]}): ${ready_nodes[*]}"
+}
+
+clear_ready_node_labels() {
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" label nodes --all \
+        "${READY_NODE_LABEL_KEY}-" --overwrite >/dev/null 2>&1; then
+
+        log "WARNING: Failed to clear Memory Pressure node labels."
+        return 1
+    fi
+}
+
+# ============================================================================
 # Start
 # ============================================================================
 
@@ -181,7 +233,12 @@ start() {
     log "Context:   ${CONTEXT:-current-context}"
     log "Namespace: $MEMORY_NAMESPACE"
     log "Manifest:  $MANIFEST"
-    log "Target:    All eligible Kubernetes nodes"
+    log "Target:    Kubernetes nodes with Ready=True"
+
+    if ! label_ready_nodes; then
+        error "Failed to select Ready Kubernetes nodes."
+        return 1
+    fi
 
     if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" create namespace \
         "$MEMORY_NAMESPACE" --dry-run=client -o yaml | \
@@ -261,21 +318,47 @@ stop() {
         >/dev/null 2>&1; then
 
         log "Namespace does not exist. Nothing to stop."
+        clear_ready_node_labels || true
         return 0
     fi
 
-    log "Deleting Namespace: $MEMORY_NAMESPACE"
+    log "Deleting Memory Pressure DaemonSets..."
 
     if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
-        delete namespace "$MEMORY_NAMESPACE" \
-        --wait=true --timeout="$MEMORY_DELETE_TIMEOUT"; then
+        --namespace "$MEMORY_NAMESPACE" delete daemonset \
+        -l app=memory-pressure \
+        --ignore-not-found=true --wait=false; then
 
-        error "Failed to delete Namespace: $MEMORY_NAMESPACE"
+        error "Failed to request DaemonSet deletion."
         return 1
     fi
 
+    log "Force deleting Memory Pressure Pods..."
+
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        --namespace "$MEMORY_NAMESPACE" delete pod \
+        -l app=memory-pressure \
+        --ignore-not-found=true \
+        --grace-period=0 --force --wait=false; then
+
+        error "Failed to request Pod deletion."
+        return 1
+    fi
+
+    log "Requesting Namespace deletion: $MEMORY_NAMESPACE"
+
+    if ! "$KUBECTL_BIN" "${KUBECTL_ARGS[@]}" \
+        delete namespace "$MEMORY_NAMESPACE" \
+        --ignore-not-found=true --wait=false; then
+
+        error "Failed to request Namespace deletion: $MEMORY_NAMESPACE"
+        return 1
+    fi
+
+    clear_ready_node_labels || true
+
     log "Memory Pressure stopped successfully."
-    log "Namespace deleted: $MEMORY_NAMESPACE"
+    log "Namespace deletion requested: $MEMORY_NAMESPACE"
     log "Node images retained."
 }
 
