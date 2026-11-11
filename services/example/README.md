@@ -13,7 +13,7 @@
 | `allow_duplicate_start` | bool | 否 | **重复启动保护**（默认 `false` = 保护开启）：同节点已有运行中实例时拒绝启动，需先停止或使用重启；`true` 允许重复启动（旧实例记录将被覆盖，旧进程需自行管理） |
 | `workspace` | string | 是 | 服务在各节点上的部署根目录（所有部署节点同一路径）。绝对路径或 `~/` 开头 |
 | `start.script` | string | 否 | 启动脚本，服务目录内相对路径，默认 `start.sh` |
-| `start.args` | string[] | 否 | 启动脚本的固定参数 |
+| `start.args` | string[] | 否 | 启动脚本的固定参数（静态，所有实例共享）；创建实例时可追加参数，二者合并冻结为实例快照，后续启动/重启沿用 |
 | `start.log` | string | 否 | 日志文件名（如 `master.log`），实际写入 `<workspace>/logs/<run_id>/<该文件名>`，每次启动独立归档、永不覆盖 |
 | `stop.script` | string | 否 | 自定义停止脚本；缺省时按 PID 文件 kill（`stop.timeout` 秒后强杀） |
 | `stop.timeout` | number | 否 | 默认 kill 方式的等待秒数，默认 10 |

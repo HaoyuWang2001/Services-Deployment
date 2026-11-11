@@ -18,7 +18,8 @@ def make_manager(tmp_path: Path) -> TaskManager:
     d = svc_dir / "svc"
     d.mkdir()
     (d / "service.json").write_text(
-        '{"name": "svc", "workspace": "/data/svc", "variables": {"A": "1"}}', encoding="utf-8")
+        '{"name": "svc", "workspace": "/data/svc", "variables": {"A": "1"},'
+        ' "start": {"script": "start.sh", "args": ["--base"], "log": "svc.log"}}', encoding="utf-8")
     (d / "start.sh").write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
     registry = InstanceRegistry(tmp_path)
@@ -109,6 +110,13 @@ def test_registry_variables_snapshot(tmp_path):
     reg.set_variables("svc", "n1", {"A": "2", "C": "3"})
     got = InstanceRegistry(tmp_path).get("svc", "n1")
     assert got.variables == {"A": "2", "C": "3"}
+    # 启动参数快照：None（旧）/ []（显式空）/ 值 可区分
+    reg.create("svc", "n2", "run-2", "/l", args=[])
+    assert InstanceRegistry(tmp_path).get("svc", "n2").args == []
+    reg.create("svc", "n3", "run-3", "/l", args=["--base", "--x"])
+    assert InstanceRegistry(tmp_path).get("svc", "n3").args == ["--base", "--x"]
+    reg.set_args("svc", "n3", ["--new"])
+    assert InstanceRegistry(tmp_path).get("svc", "n3").args == ["--new"]
     # 旧格式实例（无 variables 字段）加载为空 dict（= 无快照的旧实例）
     import json
     f2 = tmp_path / "data2"
@@ -159,6 +167,38 @@ def test_resolve_launch_vars_legacy_and_missing(tmp_path):
     assert variables == {"A": "1", "B": "9"}
 
 
+def _start_task_args(args):
+    return Task(id="t2", service="svc", action="start", nodes=["n1"], args=args)
+
+
+def test_resolve_launch_args_snapshot_semantics(tmp_path):
+    """有快照：原样沿用；显式传 args 替换快照。"""
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", args=["--base", "--frozen"])
+    args, snap = tm._resolve_launch_args(_start_task_args([]), svc, "n1")
+    assert args == ["--base", "--frozen"] and snap is None
+    args, snap = tm._resolve_launch_args(_start_task_args(["--new"]), svc, "n1")
+    assert args == ["--new"] and snap == ["--new"]
+    assert tm.instances.get("svc", "n1").args == ["--base", "--frozen"]  # 落库在 _launch
+
+
+def test_resolve_launch_args_legacy_fallback(tmp_path):
+    """旧实例（args=None）：回退静态 args；显式传后冻结，static 变更不再影响。"""
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l")   # args=None
+    assert tm.instances.get("svc", "n1").args is None
+    args, snap = tm._resolve_launch_args(_start_task_args([]), svc, "n1")
+    assert args == ["--base"] and snap is None
+    args, snap = tm._resolve_launch_args(_start_task_args(["--x"]), svc, "n1")
+    assert args == ["--base", "--x"] and snap == args
+    tm.instances.set_args("svc", "n1", snap)          # 模拟 _launch 成功落库
+    svc.start.args.append("--changed")
+    args, _ = tm._resolve_launch_args(_start_task_args([]), svc, "n1")
+    assert args == ["--base", "--x"]                   # 冻结后不受静态变更影响
+
+
 def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
     """_launch：沿用实例快照注入启动命令；显式携带变量时启动成功后落库新快照。"""
     import asyncio
@@ -172,23 +212,31 @@ def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
     svc = tm.store.service("svc")
     captured = {}
 
-    async def fake_start(pool, node_, service, run_id, variables):
+    async def fake_start(pool, node_, service, run_id, variables, args=None):
         captured["vars"] = variables
+        captured["args"] = args
         return {"pid": 42, "log_path": "/l", "uploaded": 0}
 
     monkeypatch.setattr("backend.tasks.executor.start_service", fake_start)
 
-    tm.instances.create("svc", "n1", "run-1", "/l", variables={"A": "1", "B": "9"})
+    tm.instances.create("svc", "n1", "run-1", "/l",
+                        variables={"A": "1", "B": "9"}, args=["--base", "--frozen"])
     sub = SubTask(node="n1")
-    # 无变量启动：原样沿用快照，记录不变
+    # 无变量/参数启动：原样沿用快照，记录不变
     asyncio.run(tm._launch(_start_task(), svc, node, "n1", sub, "run-1"))
     assert captured["vars"] == {"A": "1", "B": "9"}
+    assert captured["args"] == ["--base", "--frozen"]
     assert tm.instances.get("svc", "n1").variables == {"A": "1", "B": "9"}
+    assert tm.instances.get("svc", "n1").args == ["--base", "--frozen"]
     assert sub.pid == 42 and sub.run_id == "run-1"
-    # 显式携带变量启动：合并注入并落库新快照
-    asyncio.run(tm._launch(_start_task({"C": "2"}), svc, node, "n1", sub, "run-1"))
+    # 显式携带变量/参数启动：合并变量、替换参数并落库新快照
+    task2 = Task(id="t3", service="svc", action="start", nodes=["n1"],
+                 variables={"C": "2"}, args=["--new"])
+    asyncio.run(tm._launch(task2, svc, node, "n1", sub, "run-1"))
     assert captured["vars"] == {"A": "1", "B": "9", "C": "2"}
+    assert captured["args"] == ["--new"]
     assert tm.instances.get("svc", "n1").variables == {"A": "1", "B": "9", "C": "2"}
+    assert tm.instances.get("svc", "n1").args == ["--new"]
 
 
 def test_create_dirs_command_cleans_stale_pidfile():

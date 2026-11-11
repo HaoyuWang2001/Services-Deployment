@@ -44,6 +44,7 @@ class Task(BaseModel):
     action: str
     nodes: list[str]
     variables: dict[str, str] = Field(default_factory=dict)  # 用户显式提供的覆盖变量（原样记录）
+    args: list[str] = Field(default_factory=list)  # 用户显式提供的追加启动参数（原样记录）
     auto_start: bool = True  # create 动作：创建后是否立即启动
     paths: list[str] = Field(default_factory=list)  # clean 动作：补录的待清理目录
     status: str = "running"  # running | completed | partial | failed
@@ -148,8 +149,12 @@ class TaskManager:
         self._used_run_ids.add(run_id)
         return run_id
 
+    MAX_ARGS = 32
+    MAX_ARG_LEN = 512
+
     def validate(self, service_name: str, action: str, nodes: list[str],
-                 variables: dict[str, str]) -> tuple[ServiceConfig, list[Node]]:
+                 variables: dict[str, str],
+                 args: list[str] | None = None) -> tuple[ServiceConfig, list[Node]]:
         if action not in ACTIONS:
             raise TaskError(f"action 必须是 {list(ACTIONS)}，收到: {action!r}")
         try:
@@ -173,15 +178,23 @@ class TaskManager:
         for k in (variables or {}):
             if not ENV_NAME_RE.match(k):
                 raise TaskError(f"变量名非法: {k!r}")
+        if len(args or []) > self.MAX_ARGS:
+            raise TaskError(f"启动参数最多 {self.MAX_ARGS} 个")
+        for a in args or []:
+            if not isinstance(a, str) or not a:
+                raise TaskError(f"启动参数必须为非空字符串: {a!r}")
+            if len(a) > self.MAX_ARG_LEN:
+                raise TaskError(f"单个启动参数过长（≤{self.MAX_ARG_LEN} 字符）")
         resolved_nodes = [self.store.node(n) for n in nodes]
         return service, resolved_nodes
 
     async def create(self, service_name: str, action: str, nodes: list[str],
                      variables: dict[str, str] | None = None,
                      auto_start: bool = True,
-                     paths: list[str] | None = None) -> Task:
+                     paths: list[str] | None = None,
+                     args: list[str] | None = None) -> Task:
         service, resolved_nodes = self.validate(
-            service_name, action, nodes, variables or {})
+            service_name, action, nodes, variables or {}, args or [])
         clean_paths: list[str] = []
         if action == "clean":
             for p in (paths or [])[:16]:
@@ -195,6 +208,7 @@ class TaskManager:
             action=action,
             nodes=list(nodes),
             variables={} if action in ("stop", "delete", "clean") else dict(variables or {}),
+            args=[] if action in ("stop", "delete", "clean") else [str(a) for a in (args or [])],
             auto_start=auto_start,
             paths=clean_paths,
             run_id=self.new_run_id() if action == "create" else None,
@@ -260,7 +274,8 @@ class TaskManager:
                             f"（状态 {st.state}，PID {st.pid}），请先停止或删除后再创建")
                     self.instances.create(service.name, node_name, task.run_id,
                                           service.log_path(task.run_id),
-                                          variables={**service.variables, **task.variables})
+                                          variables={**service.variables, **task.variables},
+                                          args=[*service.start.args, *task.args])
                     await executor.create_dirs(self.pool, node, service, task.run_id)
                     self._record_ws(service, node_name)
                     sub.run_id = task.run_id
@@ -463,10 +478,13 @@ class TaskManager:
                       node_name: str, sub: SubTask, run_id: str) -> None:
         """部署 + 分隔符 + 续写启动，并更新实例记录。"""
         variables, snapshot = self._resolve_launch_vars(task, service, node_name)
-        info = await executor.start_service(self.pool, node, service, run_id, variables)
+        args, args_snapshot = self._resolve_launch_args(task, service, node_name)
+        info = await executor.start_service(self.pool, node, service, run_id, variables, args)
         if snapshot is not None:
             # 启动成功后才落库：失败时实例保持原快照，与状态回滚哲学一致
             self.instances.set_variables(service.name, node_name, snapshot)
+        if args_snapshot is not None:
+            self.instances.set_args(service.name, node_name, args_snapshot)
         self._record_ws(service, node_name)
         sub.pid = info["pid"]
         sub.run_id = run_id
@@ -499,6 +517,25 @@ class TaskManager:
         merged.update(task.variables)
         return merged, (merged if task.variables else None)
 
+    def _resolve_launch_args(self, task: Task, service: ServiceConfig,
+                             node_name: str) -> tuple[list[str], Optional[list[str]]]:
+        """解析本次启动的有效参数（冻结快照语义，与变量一致）。
+
+        - 实例记录创建 / 最近一次显式设置时的完整参数表（静态 args + 追加 args）；
+        - 后续启动、重启**原样沿用**快照（service.json 静态 args 修改不影响已建实例）；
+        - 任务显式携带 args 时：**替换**快照并更新实例记录（须传完整参数表）；
+        - 无快照的旧实例（None）以当前 service 静态 args 为基础，显式传 args 后冻结。
+
+        返回 (本次生效参数, 需落库的新快照 or None)。
+        """
+        inst = self.instances.get(service.name, node_name)
+        if inst is not None and inst.args is not None:
+            if task.args:
+                return list(task.args), list(task.args)
+            return list(inst.args), None
+        merged = [*service.start.args, *task.args]
+        return merged, (merged if task.args else None)
+
     def _ensure_instance(self, task: Task, service: ServiceConfig, node_name: str) -> str:
         """返回实例 run_id；实例不存在时自动创建（API 兼容：直接 start），
         并冻结 默认变量 + 任务覆盖变量 为实例快照。"""
@@ -507,5 +544,6 @@ class TaskManager:
             return inst.run_id
         run_id = task.run_id or self.new_run_id()
         self.instances.create(service.name, node_name, run_id, service.log_path(run_id),
-                              variables={**service.variables, **task.variables})
+                              variables={**service.variables, **task.variables},
+                              args=[*service.start.args, *task.args])
         return run_id

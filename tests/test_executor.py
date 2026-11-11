@@ -71,6 +71,23 @@ def test_start_command_special_chars_in_var():
     assert "env TOKEN='a b'\"'\"'c'" in cmd
 
 
+def test_start_command_args_override_and_hint():
+    """显式 args 替换静态参数；日志提示行含启动命令与变量个数（不含变量值）。"""
+    svc = make_svc()
+    cmd = build_start_command(svc, "r1", {"TOKEN": "secret"}, args=["--extra", "a b"])
+    assert "$ bash start.sh" in cmd          # 启动命令提示行
+    assert "（变量 1 个）" in cmd             # 只提示变量个数，不落值
+    assert "--extra" in cmd and "a b" in cmd
+    assert "--port" not in cmd               # 快照替换：静态参数不再出现
+    hint_part = cmd.split("printf")[1].split(">>")[0]
+    assert "secret" not in hint_part and "TOKEN" not in hint_part  # 提示行不含变量名/值
+
+
+def test_start_command_default_args_from_service():
+    cmd = build_start_command(make_svc(), "r1", {})
+    assert "--port" in cmd                   # args 缺省时使用 service.start.args
+
+
 def test_start_command_auto_cleanup_when_stop_script():
     svc = make_svc(stop={"script": "stop.sh", "timeout": 5})
     cmd = build_start_command(svc, "r1", {})

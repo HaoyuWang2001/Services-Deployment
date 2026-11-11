@@ -52,6 +52,10 @@ class Instance(BaseModel):
     # 创建实例时落库，后续启动 / 重启原样沿用；显式携带变量的启动合并更新。
     # 空 dict = 旧实例（本字段引入前创建），沿用当前 service 默认变量。
     variables: dict[str, str] = Field(default_factory=dict)
+    # 冻结的完整启动参数快照（service.start.args 静态参数 + 用户追加参数）：
+    # 创建实例时落库，后续启动 / 重启原样沿用；显式携带 args 的启动替换快照。
+    # None = 旧实例（本字段引入前创建），回退当前 service.start.args。
+    args: Optional[list[str]] = None
 
 
 def reconcile(reg_state: str, probe: str, exit_code: Optional[int]) -> str:
@@ -140,10 +144,12 @@ class InstanceRegistry:
         tmp.replace(self._file)
 
     def create(self, service: str, node: str, run_id: str, log_path: str,
-               variables: Optional[dict[str, str]] = None) -> Instance:
-        """创建实例记录（state=created）；variables 为冻结的完整变量快照。"""
+               variables: Optional[dict[str, str]] = None,
+               args: Optional[list[str]] = None) -> Instance:
+        """创建实例记录（state=created）；variables/args 为冻结的完整快照。"""
         inst = Instance(service=service, node=node, pid=None, run_id=run_id,
-                        log_path=log_path, variables=variables or {})
+                        log_path=log_path, variables=variables or {},
+                        args=list(args) if args is not None else None)
         self._items[(service, node)] = inst
         self._save()
         return inst
@@ -180,6 +186,14 @@ class InstanceRegistry:
         if inst is None:
             return
         inst.variables = dict(variables)
+        self._save()
+
+    def set_args(self, service: str, node: str, args: list[str]) -> None:
+        """更新实例的启动参数快照（显式携带 args 的启动替换后调用）。"""
+        inst = self._items.get((service, node))
+        if inst is None:
+            return
+        inst.args = list(args)
         self._save()
 
     def unregister(self, service: str, node: str) -> None:

@@ -53,6 +53,11 @@
           </div>
         </div>
       </div>
+      <div class="args-form">
+        <span class="label">启动参数：</span>
+        <el-input v-model="launchArgs" class="args-input" size="small" clearable
+                  placeholder="空格分隔，追加在静态参数之后，如 --verbose --port 2380" />
+      </div>
       <div class="actions">
         <el-checkbox v-model="deployOnly" class="deploy-only">仅部署不启动</el-checkbox>
         <el-button class="start-btn" size="small" type="primary"
@@ -392,6 +397,8 @@ async function refreshFromDisk() {
 }
 
 const draftKey = computed(() => `sd:vars-override:${name.value}`)
+const argsDraftKey = computed(() => `sd:launch-args:${name.value}`)
+const launchArgs = ref('')
 
 function loadDraft() {
   try {
@@ -410,15 +417,25 @@ function saveDraft() {
   } catch { /* localStorage 不可用时静默忽略 */ }
 }
 
+function loadArgsDraft() {
+  try { return localStorage.getItem(argsDraftKey.value) || '' } catch { return '' }
+}
+
+function saveArgsDraft() {
+  try { localStorage.setItem(argsDraftKey.value, launchArgs.value) } catch { /* ignore */ }
+}
+
 function rebuildOverride() {
   const draft = loadDraft()
   for (const k of Object.keys(varsOverride)) delete varsOverride[k]
   for (const k of Object.keys(cfg.value?.variables || {})) {
     varsOverride[k] = draft[k] != null ? String(draft[k]) : ''
   }
+  launchArgs.value = loadArgsDraft()
 }
 
 watch(varsOverride, saveDraft, { deep: true })
+watch(launchArgs, saveArgsDraft)
 
 // ---------------------------------------------------------------- 启动实例
 const selectableNodes = computed(() => {
@@ -457,9 +474,13 @@ async function submit(action) {
   for (const [k, v] of Object.entries(varsOverride)) {
     if (v !== '') variables[k] = v
   }
+  const args = launchArgs.value.trim() ? launchArgs.value.trim().split(/\s+/) : []
   try {
     const payload = { service: name.value, action, nodes: selectedNodes.value, variables }
-    if (action === 'create') payload.auto_start = !deployOnly.value
+    if (action === 'create') {
+      payload.auto_start = !deployOnly.value
+      payload.args = args
+    }
     const task = await api.createTask(payload)
     trackTask(task.id, `创建实例 ${name.value}`)
     ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
@@ -676,8 +697,10 @@ onDeactivated(() => clearInterval(timer))
 .status-hint { cursor: help; }
 .node-select { margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .label { color: var(--el-text-color-secondary); font-size: 13px; }
+.args-form { margin-bottom: 10px; display: flex; align-items: center; }
+.args-input { width: 380px; }
 .var-form { margin-bottom: 10px; display: flex; align-items: flex-start; }
-.var-form .label { height: 24px; display: inline-flex; align-items: center; flex-shrink: 0; }
+.var-form .label, .args-form .label { height: 24px; display: inline-flex; align-items: center; flex-shrink: 0; }
 .var-inputs { display: flex; flex-wrap: wrap; gap: 8px; }
 .var-input { display: flex; align-items: center; gap: 6px; }
 .var-key { font-size: 12px; color: var(--el-text-color-regular); }

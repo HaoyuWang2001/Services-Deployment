@@ -36,10 +36,13 @@ def shell_ws(workspace: str) -> str:
 _TICK_CMD = "sed 's/.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}'"
 
 
-def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str, str]) -> str:
+def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str, str],
+                        args: Optional[list[str]] = None) -> str:
     """启动命令：续写模式——同一实例多次启动共用日志文件，追加前写入分隔符行。
 
-    - 重定向使用 >>（续写），启动前写 "===== [时间] 实例启动 =====" 分隔符
+    - args 缺省（None）时使用 service.start.args；实例快照由调用方显式传入
+    - 重定向使用 >>（续写），启动前写 "===== [时间] 实例启动 =====" 分隔符，
+      并紧随一行实际启动命令提示（含参数与变量个数，不含变量值）
     - 退出码双写：exit_code（最近一次）+ exit_codes.log（历史，时间+码）
     - 配置了 stop.script 时：start.sh 自然退出（未被杀死）后自动执行 stop.sh
       完成清理（输出与其退出码写入日志，不影响实例自身退出码）
@@ -47,7 +50,8 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     """
     ws = shell_ws(service.workspace)
     script = shlex.quote(service.start.script)
-    args = " ".join(shlex.quote(a) for a in service.start.args)
+    effective_args = list(args) if args is not None else list(service.start.args)
+    args = " ".join(shlex.quote(str(a)) for a in effective_args)
     env = ""
     if variables:
         env = "env " + " ".join(f"{k}={shlex.quote(str(v))}" for k, v in variables.items()) + " "
@@ -76,9 +80,13 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
              + "exit $rc")
     separator = (f"echo \"===== [$(date '+%F %T')] 实例启动 =====\" "
                  f">> {shlex.quote(logfile)}; ")
+    hint_text = f"$ bash {service.start.script}" + (f" {args}" if args else "")
+    if variables:
+        hint_text += f"（变量 {len(variables)} 个）"
+    hint = f"printf '%s\\n' {shlex.quote(hint_text)} >> {shlex.quote(logfile)}; "
     return (
         f"cd {ws} && mkdir -p {shlex.quote(logdir)} run && "
-        f"{separator}"
+        f"{separator}{hint}"
         # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除。
         f"{{ setsid nohup {env}bash -c {shlex.quote(inner)} "
         f">> {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
@@ -390,10 +398,11 @@ def trim_output(text: str, limit: int) -> str:
 
 # --------------------------------------------------------------- 执行器 ----
 async def start_service(pool: SSHPool, node: Node, service: ServiceConfig,
-                        run_id: str, variables: dict[str, str]) -> dict:
+                        run_id: str, variables: dict[str, str],
+                        args: Optional[list[str]] = None) -> dict:
     """启动服务：部署文件 + 分隔符 + nohup 续写运行。返回 {pid, log_path, uploaded}。"""
     uploaded = await deploy_service(pool, node, service)
-    cmd = build_start_command(service, run_id, variables)
+    cmd = build_start_command(service, run_id, variables, args)
     res = await pool.run(node, cmd, timeout=60)
     if not res.ok:
         out = (res.stderr or res.stdout).strip()

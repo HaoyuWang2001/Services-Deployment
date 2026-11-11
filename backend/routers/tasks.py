@@ -15,6 +15,7 @@ class TaskCreateRequest(BaseModel):
     action: str  # deploy | create | start | stop | restart | delete | clean
     nodes: list[str] = Field(min_length=1)
     variables: dict[str, str] = Field(default_factory=dict)
+    args: list[str] = Field(default_factory=list)  # 追加启动参数（create/start/restart）
     auto_start: bool = True  # create 动作：创建后是否立即启动
     paths: list[str] = Field(default_factory=list)  # clean 动作：补录的待清理目录
 
@@ -23,7 +24,7 @@ class TaskCreateRequest(BaseModel):
 async def create_task(req: TaskCreateRequest, tm: TaskManager = Depends(get_tasks)):
     try:
         task = await tm.create(req.service, req.action, req.nodes, req.variables,
-                               auto_start=req.auto_start, paths=req.paths)
+                               auto_start=req.auto_start, paths=req.paths, args=req.args)
     except TaskError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return task.model_dump()
