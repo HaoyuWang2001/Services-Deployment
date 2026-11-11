@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+
 rm -rf /home/etcd-data && mkdir -p /home/etcd-data
 mkdir -p /var/log/mooncake/etcd
+
 exec etcd \
   --name=solo \
   --data-dir=/home/etcd-data \
