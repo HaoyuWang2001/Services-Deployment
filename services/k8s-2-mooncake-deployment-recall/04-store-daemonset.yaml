@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ${STORE_DAEMONSET_NAME}
+  namespace: ${MOONCAKE_NAMESPACE}
+  labels:
+    app: mooncake-store
+    role: store
+    ${STORE_MANAGED_LABEL_KEY}: "${STORE_MANAGED_LABEL_VALUE}"
+    ${STORE_SLOT_LABEL_KEY}: "${STORE_SLOT}"
+spec:
+  selector:
+    matchLabels:
+      app: mooncake-store
+      role: store
+      ${STORE_SLOT_LABEL_KEY}: "${STORE_SLOT}"
+  template:
+    metadata:
+      labels:
+        app: mooncake-store
+        role: store
+        ${STORE_MANAGED_LABEL_KEY}: "${STORE_MANAGED_LABEL_VALUE}"
+        ${STORE_SLOT_LABEL_KEY}: "${STORE_SLOT}"
+    spec:
+      containers:
+        - name: mooncake-store
+          image: ${MOONCAKE_IMAGE}
+          imagePullPolicy: Never
+          command:
+            - /home/mooncake/scripts/k8s-run_mooncake_store_realclient_ha.sh
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: MOONCAKE_NAMESPACE
+              value: "${MOONCAKE_NAMESPACE}"
+            - name: STORE_SLOT
+              value: "${STORE_SLOT}"
+          ports:
+            - name: store
+              containerPort: 17704
+              protocol: TCP
+          securityContext:
+            privileged: false
+            capabilities:
+              add:
+                - SYS_ADMIN
+          resources:
+            requests:
+              cpu: "8"
+              memory: 16Gi
+              unifiedbus.com/ub_net_device: 1
+            limits:
+              cpu: "8"
+              memory: 16Gi
+              unifiedbus.com/ub_net_device: 1
+          startupProbe:
+            tcpSocket:
+              port: 17704
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 17704
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 17704
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: host-ping
+              mountPath: /usr/sbin/ping
+              readOnly: true
+            - name: mooncake-logs
+              mountPath: /var/log/mooncake/store
+            - name: startup-scripts
+              mountPath: /home/mooncake/scripts/k8s-mooncake_common.sh
+              subPath: k8s-mooncake_common.sh
+              readOnly: true
+            - name: startup-scripts
+              mountPath: /home/mooncake/scripts/k8s-run_mooncake_store_realclient_ha.sh
+              subPath: k8s-run_mooncake_store_realclient_ha.sh
+              readOnly: true
+      volumes:
+        - name: host-ping
+          hostPath:
+            path: /usr/sbin/ping
+            type: File
+        - name: mooncake-logs
+          hostPath:
+            path: ${MOONCAKE_LOG_PATH}/store/slot-${STORE_SLOT}
+            type: DirectoryOrCreate
+        - name: startup-scripts
+          configMap:
+            name: ${MOONCAKE_SCRIPT_CONFIGMAP}
+            defaultMode: 0555
+      # 每个 DaemonSet 的 Pod 只匹配自己的 Slot 标签。
+      # 不设置 nodeSelector，允许在所有符合资源和设备条件的节点运行。
