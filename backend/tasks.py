@@ -154,21 +154,24 @@ class TaskManager:
 
     def validate(self, service_name: str, action: str, nodes: list[str],
                  variables: dict[str, str],
-                 args: list[str] | None = None) -> tuple[ServiceConfig, list[Node]]:
+                 args: list[str] | None = None) -> tuple[ServiceConfig | None, list[Node]]:
         if action not in ACTIONS:
             raise TaskError(f"action 必须是 {list(ACTIONS)}，收到: {action!r}")
         try:
             service = self.store.service(service_name)
         except KeyError as e:
-            raise TaskError(str(e)) from e
-        if service.hidden:
+            if action not in ("stop", "delete"):
+                raise TaskError(
+                    f"{e}（服务可能已被删除；其运行中实例仍可「停止」或「删除」）") from e
+            service = None
+        if service is not None and service.hidden:
             raise TaskError(f"{service_name} 是模板服务（hidden），不可直接操作；请先克隆为新服务")
         if not nodes:
             raise TaskError("nodes 不能为空")
         unknown = [n for n in nodes if self.store.cluster.node(n) is None]
         if unknown:
             raise TaskError(f"未知节点: {unknown}")
-        if service.nodes:
+        if service is not None and service.nodes:
             not_allowed = [n for n in nodes if n not in service.nodes]
             if not_allowed:
                 raise TaskError(
@@ -195,6 +198,8 @@ class TaskManager:
                      args: list[str] | None = None) -> Task:
         service, resolved_nodes = self.validate(
             service_name, action, nodes, variables or {}, args or [])
+        if service is None and action not in ("stop", "delete"):
+            raise TaskError(f"服务 {service_name} 配置不存在（已删除），仅支持对实例执行停止/删除")
         clean_paths: list[str] = []
         if action == "clean":
             for p in (paths or [])[:16]:
@@ -232,7 +237,7 @@ class TaskManager:
     def list(self, limit: int = 50) -> list[Task]:
         return self._tasks[:limit]
 
-    async def _execute(self, task: Task, service: ServiceConfig) -> None:
+    async def _execute(self, task: Task, service: ServiceConfig | None) -> None:
         sub_by_node = {s.node: s for s in task.subtasks}
         await asyncio.gather(
             *(self._run_subtask(task, service, node_name, sub_by_node[node_name])
@@ -250,10 +255,13 @@ class TaskManager:
         self._persist()
         log.info("任务 %s 结束: %s", task.id, task.status)
 
-    async def _run_subtask(self, task: Task, service: ServiceConfig,
+    async def _run_subtask(self, task: Task, service: ServiceConfig | None,
                            node_name: str, sub: SubTask) -> None:
         node = self.store.node(node_name)
         try:
+            if service is None and task.action not in ("stop", "delete"):
+                raise executor.ExecError(
+                    f"服务 {task.service} 配置不存在（已删除），仅支持对实例执行停止/删除")
             if task.action == "deploy":
                 n = await deploy_service(self.pool, node, service)
                 sub.uploaded = n
@@ -275,7 +283,8 @@ class TaskManager:
                     self.instances.create(service.name, node_name, task.run_id,
                                           service.log_path(task.run_id),
                                           variables={**service.variables, **task.variables},
-                                          args=[*service.start.args, *task.args])
+                                          args=[*service.start.args, *task.args],
+                                          cfg=service)
                     await executor.create_dirs(self.pool, node, service, task.run_id)
                     self._record_ws(service, node_name)
                     sub.run_id = task.run_id
@@ -313,37 +322,39 @@ class TaskManager:
 
             elif task.action == "stop":
                 # 状态机：仅 running / abnormal / completed 可停止（走停止中 → 已停止）
-                async with self._start_lock(service.name, node_name):
-                    inst = self.instances.get(service.name, node_name)
+                # 服务配置已删除时，使用实例创建/启动时冻结的配置快照
+                async with self._start_lock(task.service, node_name):
+                    inst = self.instances.get(task.service, node_name)
                     if inst is None:
                         raise executor.ExecError(
-                            f"节点 {node_name} 无服务 {service.name} 的实例记录，无法停止")
-                    st = await executor.service_status(self.pool, node, service, inst.run_id)
+                            f"节点 {node_name} 无服务 {task.service} 的实例记录，无法停止")
+                    svc_cfg = service if service is not None else self._frozen_config(inst)
+                    st = await executor.service_status(self.pool, node, svc_cfg, inst.run_id)
                     from .instances import CAN_STOP, reconcile
                     display = reconcile(inst.state, st.state, st.exit_code)
                     if display not in CAN_STOP:
                         raise executor.ExecError(
                             f"当前状态不允许停止；{_state_guidance(display, st, inst)}")
                     run_id = inst.run_id
-                    self.instances.set_state(service.name, node_name, "stopping")
+                    self.instances.set_state(task.service, node_name, "stopping")
                     try:
-                        out = await executor.stop_service(self.pool, node, service, run_id=run_id)
+                        out = await executor.stop_service(self.pool, node, svc_cfg, run_id=run_id)
                         sub.detail = out
-                        self.instances.set_state(service.name, node_name, "stopped")
-                        self.instances.set_stop_result(service.name, node_name, "ok")
+                        self.instances.set_state(task.service, node_name, "stopped")
+                        self.instances.set_stop_result(task.service, node_name, "ok")
                     except executor.ExecError as e:
                         msg = str(e)
                         if "stop.sh 失败" in msg:
                             m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
                             code = m.group(1) if m else "?"
                             self.instances.set_stop_result(
-                                service.name, node_name, f"failed:{code}")
+                                task.service, node_name, f"failed:{code}")
                         else:
-                            self.instances.set_stop_result(service.name, node_name, "killfail")
+                            self.instances.set_stop_result(task.service, node_name, "killfail")
                         # 状态回退：按探活判定（活→running，死→exited）
-                        st2 = await executor.service_status(self.pool, node, service, run_id)
+                        st2 = await executor.service_status(self.pool, node, svc_cfg, run_id)
                         self.instances.set_state(
-                            service.name, node_name,
+                            task.service, node_name,
                             "running" if st2.state == "running" else "exited")
                         raise
                     sub.run_id = run_id
@@ -398,14 +409,15 @@ class TaskManager:
             elif task.action == "delete":
                 # 状态机：created/stopped/completed/notdeployed 直接删除；
                 # running = 链接「停止→删除」，停止必须正常完成否则中止删除；abnormal 拒绝（先停止归一）
-                async with self._start_lock(service.name, node_name):
-                    inst = self.instances.get(service.name, node_name)
+                async with self._start_lock(task.service, node_name):
+                    inst = self.instances.get(task.service, node_name)
                     if inst is None:
                         sub.detail = "实例不存在（幂等成功）"
                     else:
                         sub.run_id = inst.run_id
                         sub.log_path = inst.log_path
-                        st = await executor.service_status(self.pool, node, service, inst.run_id)
+                        svc_cfg = service if service is not None else self._frozen_config(inst)
+                        st = await executor.service_status(self.pool, node, svc_cfg, inst.run_id)
                         from .instances import CAN_DELETE, reconcile
                         display = reconcile(inst.state, st.state, st.exit_code)
                         if display not in CAN_DELETE:
@@ -413,39 +425,39 @@ class TaskManager:
                                 f"当前状态不允许删除；{_state_guidance(display, st, inst)}")
                         if display == "running":
                             # 链接停止：完整停止管线（组杀 + stop.sh + 日志）
-                            self.instances.set_state(service.name, node_name, "stopping")
+                            self.instances.set_state(task.service, node_name, "stopping")
                             try:
                                 out = await executor.stop_service(
-                                    self.pool, node, service, run_id=inst.run_id)
+                                    self.pool, node, svc_cfg, run_id=inst.run_id)
                             except executor.ExecError as e:
                                 msg = str(e)
                                 if "stop.sh 失败" in msg:
                                     m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
                                     code = m.group(1) if m else "?"
                                     self.instances.set_stop_result(
-                                        service.name, node_name, f"failed:{code}")
+                                        task.service, node_name, f"failed:{code}")
                                 else:
                                     self.instances.set_stop_result(
-                                        service.name, node_name, "killfail")
+                                        task.service, node_name, "killfail")
                                 st2 = await executor.service_status(
-                                    self.pool, node, service, inst.run_id)
+                                    self.pool, node, svc_cfg, inst.run_id)
                                 self.instances.set_state(
-                                    service.name, node_name,
+                                    task.service, node_name,
                                     "running" if st2.state == "running" else "exited")
                                 raise  # 停止未正常结束：中止删除，实例保留可重试
-                            self.instances.set_stop_result(service.name, node_name, "ok")
-                            self.instances.set_state(service.name, node_name, "deleting")
+                            self.instances.set_stop_result(task.service, node_name, "ok")
+                            self.instances.set_state(task.service, node_name, "deleting")
                             sub.detail = (out or "") + "；停止完成，实例已删除"
-                            self.instances.unregister(service.name, node_name)
+                            self.instances.unregister(task.service, node_name)
                         else:
-                            self.instances.set_state(service.name, node_name, "deleting")
+                            self.instances.set_state(task.service, node_name, "deleting")
                             # 可删除态均无需停止进程/清理（已停止或从未运行）
                             sub.detail = f"实例已删除（状态 {display}；节点文件保留，可用「清理」移除）"
-                            self.instances.unregister(service.name, node_name)
+                            self.instances.unregister(task.service, node_name)
 
             elif task.action == "clean":
-                # 服务级清理：仅当该节点不存在实例时允许（运行/停止/已退出均算存在）
-                existing = self.instances.get(service.name, node_name)
+                # 服务级清理需要服务配置枚举目录；服务已删除时不可用
+                existing = self.instances.get(task.service, node_name)
                 if existing is not None:
                     raise executor.ExecError(
                         f"节点 {node_name} 存在服务 {service.name} 的实例"
@@ -485,6 +497,7 @@ class TaskManager:
             self.instances.set_variables(service.name, node_name, snapshot)
         if args_snapshot is not None:
             self.instances.set_args(service.name, node_name, args_snapshot)
+        self.instances.set_config(service.name, node_name, service)
         self._record_ws(service, node_name)
         sub.pid = info["pid"]
         sub.run_id = run_id
@@ -536,6 +549,15 @@ class TaskManager:
         merged = [*service.start.args, *task.args]
         return merged, (merged if task.args else None)
 
+    @staticmethod
+    def _frozen_config(inst) -> ServiceConfig:
+        """服务已删除时由实例冻结快照重建停止配置；无快照则拒绝操作。"""
+        if not inst.workspace:
+            raise executor.ExecError(
+                f"服务 {inst.service} 配置已删除且实例无配置快照，无法安全操作；"
+                "请在节点上手动清理该实例")
+        return inst.as_service_config()
+
     def _ensure_instance(self, task: Task, service: ServiceConfig, node_name: str) -> str:
         """返回实例 run_id；实例不存在时自动创建（API 兼容：直接 start），
         并冻结 默认变量 + 任务覆盖变量 为实例快照。"""
@@ -545,5 +567,6 @@ class TaskManager:
         run_id = task.run_id or self.new_run_id()
         self.instances.create(service.name, node_name, run_id, service.log_path(run_id),
                               variables={**service.variables, **task.variables},
-                              args=[*service.start.args, *task.args])
+                              args=[*service.start.args, *task.args],
+                              cfg=service)
         return run_id

@@ -18,7 +18,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from . import executor
-from .config import ConfigStore
+from .config import ConfigStore, ServiceConfig
 from .ssh import SSHPool
 
 log = logging.getLogger("sd.instances")
@@ -56,6 +56,22 @@ class Instance(BaseModel):
     # 创建实例时落库，后续启动 / 重启原样沿用；显式携带 args 的启动替换快照。
     # None = 旧实例（本字段引入前创建），回退当前 service.start.args。
     args: Optional[list[str]] = None
+    # 冻结的停止配置快照（创建 / 最近一次启动时）：
+    # 服务配置被删除后，实例仍可用这些字段完成停止 / 删除。
+    # workspace 为空 = 无快照的旧实例（服务存在时由 refresh 自动补齐）。
+    workspace: str = ""
+    stop_script: Optional[str] = None
+    stop_timeout: float = 10.0
+    log_file: str = "service.log"
+
+    def as_service_config(self) -> ServiceConfig:
+        """由冻结快照重建停止 / 删除所需的 ServiceConfig（不含启动上传所需信息）。"""
+        return ServiceConfig(
+            name=self.service,
+            workspace=self.workspace,
+            start={"script": "start.sh", "log": self.log_file},
+            stop={"script": self.stop_script, "timeout": self.stop_timeout},
+        )
 
 
 def reconcile(reg_state: str, probe: str, exit_code: Optional[int]) -> str:
@@ -145,11 +161,16 @@ class InstanceRegistry:
 
     def create(self, service: str, node: str, run_id: str, log_path: str,
                variables: Optional[dict[str, str]] = None,
-               args: Optional[list[str]] = None) -> Instance:
-        """创建实例记录（state=created）；variables/args 为冻结的完整快照。"""
+               args: Optional[list[str]] = None,
+               cfg: Optional[ServiceConfig] = None) -> Instance:
+        """创建实例记录（state=created）；variables/args/cfg 为冻结的完整快照。"""
         inst = Instance(service=service, node=node, pid=None, run_id=run_id,
                         log_path=log_path, variables=variables or {},
-                        args=list(args) if args is not None else None)
+                        args=list(args) if args is not None else None,
+                        workspace=cfg.workspace if cfg is not None else "",
+                        stop_script=cfg.stop.script if cfg is not None else None,
+                        stop_timeout=cfg.stop.timeout if cfg is not None else 10.0,
+                        log_file=cfg.start.log if cfg is not None else "service.log")
         self._items[(service, node)] = inst
         self._save()
         return inst
@@ -196,6 +217,17 @@ class InstanceRegistry:
         inst.args = list(args)
         self._save()
 
+    def set_config(self, service: str, node: str, cfg: ServiceConfig) -> None:
+        """刷新实例的停止配置快照（每次启动成功后调用；workspace 可能已变）。"""
+        inst = self._items.get((service, node))
+        if inst is None:
+            return
+        inst.workspace = cfg.workspace
+        inst.stop_script = cfg.stop.script
+        inst.stop_timeout = cfg.stop.timeout
+        inst.log_file = cfg.start.log
+        self._save()
+
     def unregister(self, service: str, node: str) -> None:
         self._items.pop((service, node), None)
         self._save()
@@ -215,7 +247,6 @@ class InstanceRegistry:
         async def _probe(inst: Instance) -> dict:
             d = inst.model_dump()
             try:
-                svc = store.service(inst.service)
                 node = store.node(inst.node)
             except KeyError as e:
                 d["status"] = "unknown"
@@ -223,6 +254,24 @@ class InstanceRegistry:
                 d["exit_code"] = None
                 d["cleanup_status"] = "none"
                 return d
+            try:
+                svc = store.service(inst.service)
+            except KeyError:
+                svc = None
+            if svc is not None and not inst.workspace:
+                # 旧实例懒补齐停止配置快照（服务仍存在时自愈）
+                self.set_config(inst.service, inst.node, svc)
+                d.update(workspace=svc.workspace, stop_script=svc.stop.script,
+                         stop_timeout=svc.stop.timeout, log_file=svc.start.log)
+            if svc is None:
+                if not inst.workspace:
+                    d["status"] = "unknown"
+                    d["note"] = "服务配置已删除且实例无配置快照，无法自动操作；请在节点上手动清理"
+                    d["exit_code"] = None
+                    d["cleanup_status"] = "none"
+                    return d
+                d["note"] = "服务配置已删除（实例仍可停止/删除）"
+                svc = inst.as_service_config()
             st = await executor.service_status(pool, node, svc, inst.run_id)
             display = reconcile(inst.state, st.state, st.exit_code)
             # 自动落库：running 检测到死亡 → exited；exited 检测到复活（外部重启）→ running

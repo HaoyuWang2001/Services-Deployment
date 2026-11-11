@@ -13,10 +13,10 @@
       <div class="toolbar">
         <span class="sd-muted">已选 {{ selected.length }} / {{ instances.length }} 个实例</span>
         <div class="toolbar-actions">
-          <el-tooltip :disabled="canStart" content="请勾选实例；且选中实例需全部处于可启动状态" placement="top">
+          <el-tooltip :disabled="canStart" content="请勾选实例；且选中实例需全部处于可启动状态（配置缺失的实例不可启动）" placement="top">
             <span><el-button size="small" type="success" :plain="isDark" :disabled="!canStart" @click="openBatch('start')">启动选中</el-button></span>
           </el-tooltip>
-          <el-tooltip :disabled="canRestart" content="请勾选实例；且选中实例需全部处于运行中" placement="top">
+          <el-tooltip :disabled="canRestart" content="请勾选实例；且选中实例需全部处于运行中（配置缺失的实例不可重启）" placement="top">
             <span><el-button size="small" type="primary" :plain="isDark" :disabled="!canRestart" @click="openBatch('restart')">重启选中</el-button></span>
           </el-tooltip>
           <el-tooltip :disabled="canStop" content="请勾选实例；且选中实例需全部处于可停止状态" placement="top">
@@ -36,7 +36,14 @@
           </el-empty>
         </template>
         <el-table-column type="selection" reserve-selection width="45" />
-        <el-table-column prop="service" label="服务" min-width="150" />
+        <el-table-column label="服务" min-width="160">
+          <template #default="{ row }">
+            <span>{{ row.service }}</span>
+            <el-tooltip v-if="row.note" :content="row.note" placement="top">
+              <el-tag type="warning" size="small" effect="plain" class="note-tag">配置缺失</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="node" width="110" label="节点" />
         <el-table-column label="状态" width="150">
           <template #default="{ row }">
@@ -154,8 +161,11 @@ async function load(silent = false) {
 // 严格全部门禁：全部选中实例符合该动作允许状态才可点击
 const everyIn = (set) => computed(() =>
   selected.value.length > 0 && selected.value.every((r) => set.includes(r.status)))
-const canStart = everyIn(STARTABLE)
-const canRestart = everyIn(RESTARTABLE)
+// 服务配置已删除的实例（有 note）不允许启动/重启
+const everyInStartable = (set) => computed(() =>
+  selected.value.length > 0 && selected.value.every((r) => !r.note && set.includes(r.status)))
+const canStart = everyInStartable(STARTABLE)
+const canRestart = everyInStartable(RESTARTABLE)
 const canStop = everyIn(STOPPABLE)
 const canDelete = everyIn(DELETABLE)
 
@@ -192,9 +202,11 @@ function markEligible(action, targets, freshList) {
       ...t,
       run_id: live?.run_id ?? t.run_id,
       status,
+      note: live?.note ?? t.note,
       cleanup_status: live?.cleanup_status ?? t.cleanup_status,
       exit_code: live?.exit_code ?? t.exit_code,
-      eligible: isEligible(action, status),
+      eligible: isEligible(action, status)
+        && !((action === 'start' || action === 'restart') && (live?.note ?? t.note)),
     }
   })
 }
@@ -262,4 +274,5 @@ onUnmounted(() => clearInterval(timer))
 .batch-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: var(--sd-space-3); display: flex; align-items: center; gap: var(--sd-space-2); }
 .batch-warn { color: var(--el-color-danger); }
 .status-hint { cursor: help; }
+.note-tag { margin-left: var(--sd-space-2); }
 </style>

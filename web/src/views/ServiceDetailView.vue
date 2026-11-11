@@ -654,6 +654,7 @@ async function init() {
     setTimer()
   } catch (e) {
     loadError.value = `加载服务 ${name.value} 失败: ${e.message}`
+      + `。若该服务配置已被删除，其运行中实例仍可在「运行实例」页停止或删除。`
   }
 }
 

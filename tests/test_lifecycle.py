@@ -247,3 +247,106 @@ def test_create_dirs_command_cleans_stale_pidfile():
     cmd = build_create_dirs_command(svc, "20261028-120000")
     assert "mkdir -p /data/svc/logs/20261028-120000 /data/svc/run" in cmd
     assert "rm -f /data/svc/run/svc.pid" in cmd
+
+
+# ------------------------------------------------ 服务删除后的实例操作 ----
+def test_instance_config_snapshot_roundtrip(tmp_path):
+    """创建实例时冻结停止配置快照，跨进程持久化且可重建 ServiceConfig。"""
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    got = InstanceRegistry(tmp_path).get("svc", "n1")
+    assert got.workspace == "/data/svc"
+    assert got.log_file == "svc.log"
+    assert got.stop_timeout == svc.stop.timeout
+    cfg = got.as_service_config()
+    assert cfg.name == "svc" and cfg.workspace == "/data/svc"
+    assert cfg.start.log == "svc.log"
+    assert cfg.stop.script == svc.stop.script
+
+
+def test_stop_and_delete_allowed_after_service_deleted(tmp_path, monkeypatch):
+    """服务删除后：停止/删除用实例快照配置完成；启动被拒绝。"""
+    import asyncio
+    from backend import executor
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    del tm.store.services["svc"]
+
+    service, nodes = tm.validate("svc", "stop", ["n1"], {})
+    assert service is None and [n.name for n in nodes] == ["n1"]
+    tm.validate("svc", "delete", ["n1"], {})
+    with pytest.raises(Exception, match="停止|删除"):
+        tm.validate("svc", "start", ["n1"], {})
+
+    captured = {}
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        captured["status_cfg"] = svc_cfg
+        return executor.ServiceStatus("running", pid=1)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None):
+        captured["stop_cfg"] = svc_cfg
+        return "stopped"
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+
+    # 停止
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t1", service="svc", action="stop", nodes=["n1"]),
+                                None, "n1", sub))
+    assert sub.status == "success", sub.error
+    assert captured["stop_cfg"].workspace == "/data/svc"
+    assert captured["stop_cfg"].start.log == "svc.log"
+
+    # 删除（运行中 → 链接停止 → 注销）
+    tm.instances.set_state("svc", "n1", "running")
+    sub2 = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t2", service="svc", action="delete", nodes=["n1"]),
+                                None, "n1", sub2))
+    assert sub2.status == "success", sub2.error
+    assert tm.instances.get("svc", "n1") is None
+
+
+def test_stop_legacy_without_snapshot_gives_guidance(tmp_path):
+    """无快照旧实例 + 服务已删：拒绝操作并给出手动清理指引。"""
+    import asyncio
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    tm.instances.create("svc", "n1", "run-1", "/l")   # 无 cfg 快照
+    del tm.store.services["svc"]
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t1", service="svc", action="stop", nodes=["n1"]),
+                                None, "n1", sub))
+    assert sub.status == "failed"
+    assert "配置快照" in sub.error
+
+
+def test_refresh_uses_snapshot_and_backfills(tmp_path, monkeypatch):
+    """服务删除后刷新用快照探活；旧实例在服务存在时自动补齐快照。"""
+    import asyncio
+    from backend import executor
+
+    tm = make_manager(tmp_path)
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("running", pid=1)
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+
+    # 旧实例（无快照）+ 服务存在 → 刷新自动补齐
+    tm.instances.create("svc", "n1", "run-1", "/l")
+    asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    assert InstanceRegistry(tmp_path).get("svc", "n1").workspace == "/data/svc"
+
+    # 服务删除 → 用快照探活，状态正常且带提示
+    del tm.store.services["svc"]
+    out = asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    row = out[0]
+    assert row["status"] == "running"
+    assert "已删除" in row["note"]
