@@ -1,0 +1,21 @@
+{
+  "name": "ssh-3-mooncake-store",
+  "description": "Mooncake Store",
+  "workspace": "/home/w00921547/Services-Deployment/mooncake-store",
+  "start": {
+    "script": "run_mooncake_store_realclient_ha.sh",
+    "args": [],
+    "log": "store.log"
+  },
+  "stop": {
+    "timeout": 10
+  },
+  "variables": {},
+  "nodes": [
+    "node1",
+    "node2",
+    "node3",
+    "node4"
+  ],
+  "allow_duplicate_start": false
+}
