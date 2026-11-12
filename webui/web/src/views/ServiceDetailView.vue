@@ -138,9 +138,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="log_path" label="日志路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button size="small" link type="primary" @click="viewLog(row)">日志</el-button>
+            <el-button v-if="TRANSIENT.includes(row.status)" size="small" link type="warning"
+                       @click="unlockRow(row)">解除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -632,6 +634,24 @@ async function confirmInstBatch() {
 
 function viewLog(row) {
   useRouterPush({ path: '/logs', query: { service: row.service, node: row.node, run_id: row.run_id, connect: '1', _t: String(Date.now()) } })
+}
+
+async function unlockRow(row) {
+  try {
+    await ElMessageBox.confirm(
+      `实例状态卡在「${statusText(row)}」（可能因后端中断或网络异常）。`
+      + '将按节点实际状态收敛：进程存活→恢复运行中，已退出→已停止/已退出，删除中→补完删除。继续？',
+      '解除卡死状态', { type: 'warning', confirmButtonText: '解除', cancelButtonText: '取消' })
+  } catch { return }
+  try {
+    const r = await api.unlockInstance(row.service, row.node)
+    ElMessage.success(r.resolved === 'deleted'
+      ? '已补完删除（实例记录已移除）'
+      : `已收敛为「${statusText({ status: r.resolved })}」`)
+    loadInstances(true)
+  } catch (e) {
+    ElMessage.error(`解除失败：${e.message}`)
+  }
 }
 
 // ---------------------------------------------------------------- 初始化

@@ -344,7 +344,9 @@ class TaskManager:
                         sub.detail = out
                         self.instances.set_state(task.service, node_name, "stopped")
                         self.instances.set_stop_result(task.service, node_name, "ok")
-                    except executor.ExecError as e:
+                    except Exception as e:  # noqa: BLE001
+                        # 含 ExecError 与 SSHError（SSH 超时/网络异常）：任何失败都必须
+                        # 回滚瞬态，避免实例永久卡在「停止中」
                         msg = str(e)
                         if "stop.sh 失败" in msg:
                             m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
@@ -353,11 +355,15 @@ class TaskManager:
                                 task.service, node_name, f"failed:{code}")
                         else:
                             self.instances.set_stop_result(task.service, node_name, "killfail")
-                        # 状态回退：按探活判定（活→running，死→exited）
-                        st2 = await executor.service_status(self.pool, node, svc_cfg, run_id)
-                        self.instances.set_state(
-                            task.service, node_name,
-                            "running" if st2.state == "running" else "exited")
+                        # 状态回退：按探活判定（活→running，死→exited）；
+                        # 探活也失败时保持瞬态，交由 TTL 自动收敛 / 手动「解除」
+                        try:
+                            st2 = await executor.service_status(self.pool, node, svc_cfg, run_id)
+                            self.instances.set_state(
+                                task.service, node_name,
+                                "running" if st2.state == "running" else "exited")
+                        except Exception:  # noqa: BLE001
+                            pass
                         raise
                     sub.run_id = run_id
                     sub.log_path = inst.log_path
@@ -383,7 +389,7 @@ class TaskManager:
                         out = await executor.stop_service(
                             self.pool, node, service, run_id=run_id,
                             variables=self._stop_vars(inst, service))
-                    except executor.ExecError as e:
+                    except Exception as e:  # noqa: BLE001
                         msg = str(e)
                         if "stop.sh 失败" in msg:
                             m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
@@ -392,10 +398,13 @@ class TaskManager:
                                 service.name, node_name, f"failed:{code}")
                         else:
                             self.instances.set_stop_result(service.name, node_name, "killfail")
-                        st2 = await executor.service_status(self.pool, node, service, run_id)
-                        self.instances.set_state(
-                            service.name, node_name,
-                            "running" if st2.state == "running" else "exited")
+                        try:
+                            st2 = await executor.service_status(self.pool, node, service, run_id)
+                            self.instances.set_state(
+                                service.name, node_name,
+                                "running" if st2.state == "running" else "exited")
+                        except Exception:  # noqa: BLE001
+                            pass  # 探活失败：保持瞬态，交由 TTL / 手动解除收敛
                         raise  # 中止重启，等待用户排查后重新操作
                     self.instances.set_stop_result(service.name, node_name, "ok")
                     sub.detail = out
@@ -434,7 +443,7 @@ class TaskManager:
                                 out = await executor.stop_service(
                                     self.pool, node, svc_cfg, run_id=inst.run_id,
                                     variables=self._stop_vars(inst, service))
-                            except executor.ExecError as e:
+                            except Exception as e:  # noqa: BLE001
                                 msg = str(e)
                                 if "stop.sh 失败" in msg:
                                     m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
@@ -444,11 +453,14 @@ class TaskManager:
                                 else:
                                     self.instances.set_stop_result(
                                         task.service, node_name, "killfail")
-                                st2 = await executor.service_status(
-                                    self.pool, node, svc_cfg, inst.run_id)
-                                self.instances.set_state(
-                                    task.service, node_name,
-                                    "running" if st2.state == "running" else "exited")
+                                try:
+                                    st2 = await executor.service_status(
+                                        self.pool, node, svc_cfg, inst.run_id)
+                                    self.instances.set_state(
+                                        task.service, node_name,
+                                        "running" if st2.state == "running" else "exited")
+                                except Exception:  # noqa: BLE001
+                                    pass  # 探活失败：保持瞬态，交由 TTL / 手动解除收敛
                                 raise  # 停止未正常结束：中止删除，实例保留可重试
                             self.instances.set_stop_result(task.service, node_name, "ok")
                             self.instances.set_state(task.service, node_name, "deleting")

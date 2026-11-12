@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -27,6 +28,9 @@ log = logging.getLogger("sd.instances")
 BASE_STATES = ("created", "starting", "running", "stopping", "stopped", "deleting", "exited")
 # 瞬态（任务执行期间，拒绝其它操作）
 TRANSIENT_STATES = ("starting", "stopping", "deleting")
+# 瞬态超过此时长仍未落库（后端中断/崩溃遗留）→ 刷新时按探活自动收敛；
+# 远大于任何真实操作上限（stop.timeout ≤ 300s + 60s 余量、启动 60s）
+TRANSIENT_TTL = 600.0
 # 展示状态 → 允许的操作（deploying/degraded 为心跳派生态，进程均存活 → 同 running）
 CAN_STOP = ("running", "abnormal", "completed", "degraded", "deploying")
 CAN_START = ("created", "stopped", "completed", "notdeployed")
@@ -46,6 +50,7 @@ class Instance(BaseModel):
     run_id: str
     log_path: str
     state: str = "created"  # created/starting/running/stopping/stopped/deleting/exited
+    state_ts: float = 0.0  # 进入当前 state 的时间戳（瞬态 TTL 收敛用；旧记录 0=立即过期）
     stop_result: str = "none"  # 手动停止结果：none/ok/failed:N/killfail
     created_at: str = Field(default_factory=_now_iso)
     started_at: str = Field(default_factory=_now_iso)  # 最近一次启动时间
@@ -194,6 +199,7 @@ class InstanceRegistry:
         inst.log_path = log_path
         inst.started_at = _now_iso()
         inst.state = "running"
+        inst.state_ts = time.time()
         inst.stop_result = "none"  # 新一轮运行，历史手动停止结果作废
         self._save()
 
@@ -202,7 +208,24 @@ class InstanceRegistry:
         if inst is None:
             return
         inst.state = state
+        inst.state_ts = time.time()
         self._save()
+
+    def resolve_transient(self, inst: Instance, probe_state: str) -> Optional[str]:
+        """瞬态卡死收敛（TTL 超时自动 / 手动「解除」共用）。
+
+        - deleting：该状态仅在停止管线成功后才设置 → 直接补完注销
+        - 进程存活 → running；其余 → exited（清理状态列保留节点真实结果）
+        返回说明文本（deleting 补删）或 None。
+        """
+        if inst.state not in TRANSIENT_STATES:
+            return None
+        if inst.state == "deleting":
+            self.unregister(inst.service, inst.node)
+            return "删除中卡死已自动补完删除（实例记录已移除）"
+        self.set_state(inst.service, inst.node,
+                       "running" if probe_state == "running" else "exited")
+        return None
 
     def set_stop_result(self, service: str, node: str, result: str) -> None:
         inst = self._items.get((service, node))
@@ -283,6 +306,19 @@ class InstanceRegistry:
                 d["note"] = "服务配置已删除（实例仍可停止/删除）"
                 svc = inst.as_service_config()
             st = await executor.service_status(pool, node, svc, inst.run_id)
+            # 瞬态 TTL 收敛：后端中断/崩溃遗留的 starting/stopping/deleting
+            if inst.state in TRANSIENT_STATES and (time.time() - inst.state_ts) > TRANSIENT_TTL:
+                note = self.resolve_transient(inst, st.state)
+                if self.get(inst.service, inst.node) is None:
+                    # deleting 已补完：本轮返回终态行，下次刷新即消失
+                    d["status"] = "stopped"
+                    d["note"] = note or "删除中卡死已自动补完删除"
+                    d["deploy_state"] = None
+                    d["exit_code"] = None
+                    d["cleanup_status"] = "none"
+                    return d
+                inst = self.get(inst.service, inst.node) or inst
+                d["state"] = inst.state
             display = reconcile(inst.state, st.state, st.exit_code, st.deploy_state)
             # 自动落库：running 检测到死亡 → exited；exited 检测到复活（外部重启）→ running
             if inst.state == "running" and display in ("completed", "abnormal"):

@@ -426,3 +426,88 @@ def test_refresh_surfaces_deploy_heartbeat(tmp_path, monkeypatch):
         monkeypatch.setattr(executor, "service_status", fake_status)
         out = asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
         assert out[0]["status"] == expected
+
+
+# ------------------------------------------------ 瞬态卡死收敛 / 异常兜底 ----
+def test_set_state_stamps_state_ts(tmp_path):
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    inst = tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    assert inst.state_ts == 0.0
+    tm.instances.set_state("svc", "n1", "stopping")
+    assert tm.instances.get("svc", "n1").state_ts > 0
+
+
+def test_transient_ttl_auto_resolve(tmp_path, monkeypatch):
+    """瞬态超时（state_ts=0 视为已过期）→ 按探活收敛；deleting 补完删除。"""
+    import asyncio
+    from webui.backend import executor
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("running", pid=1)
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+
+    # stopping 卡死 + 进程存活 → running
+    tm.instances.set_state("svc", "n1", "stopping")
+    tm.instances.get("svc", "n1").state_ts = 0.0
+    out = asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    assert tm.instances.get("svc", "n1").state == "running"
+    assert out[0]["status"] == "running"
+
+    # starting 卡死 + 进程已死 → exited
+    tm.instances.set_state("svc", "n1", "starting")
+    tm.instances.get("svc", "n1").state_ts = 0.0
+
+    async def fake_dead(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("dead", pid=1, exit_code=7)
+
+    monkeypatch.setattr(executor, "service_status", fake_dead)
+    asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    assert tm.instances.get("svc", "n1").state == "exited"
+    assert tm.instances.get("svc", "n1").state_ts > 0  # 收敛时重新打戳
+
+    # 未过期的瞬态保持原样
+    tm.instances.set_state("svc", "n1", "stopping")
+    asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    assert tm.instances.get("svc", "n1").state == "stopping"
+
+    # deleting 卡死 → 自动补完注销（本轮返回终态行）
+    tm.instances.set_state("svc", "n1", "deleting")
+    tm.instances.get("svc", "n1").state_ts = 0.0
+    out = asyncio.run(tm.instances.refresh(pool=None, store=tm.store))
+    assert tm.instances.get("svc", "n1") is None
+    assert out[0]["status"] == "stopped"
+    assert "补完删除" in out[0]["note"]
+
+
+def test_stop_ssh_error_rolls_back_transient(tmp_path, monkeypatch):
+    """SSH 超时抛 SSHError（非 ExecError）时也必须回滚瞬态，不得卡在停止中。"""
+    import asyncio
+    from webui.backend import executor
+    from webui.backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    tm.instances.set_state("svc", "n1", "running")
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("running", pid=1)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None, variables=None):
+        raise executor.SSHError("在 n1 上执行命令超时(>70s)")
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(Task(id="t9", service="svc", action="stop", nodes=["n1"]),
+                                svc, "n1", sub))
+    assert sub.status == "failed"
+    assert tm.instances.get("svc", "n1").state == "running"  # 已回滚，不再卡 stopping
+    assert tm.instances.get("svc", "n1").stop_result == "killfail"

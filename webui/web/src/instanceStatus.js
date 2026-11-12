@@ -69,6 +69,9 @@ export function cleanupText(c) {
   return c
 }
 
+// 瞬态（任务执行中）状态：卡死时可手动「解除」
+export const TRANSIENT = ['starting', 'stopping', 'deleting']
+
 // 批量按钮门禁集合（按钮要求全部选中实例符合）
 // deploying/degraded 为心跳派生态，进程存活 → 与 running 同门禁（不可启动）
 export const STOPPABLE = ['running', 'abnormal', 'completed', 'deploying', 'degraded']

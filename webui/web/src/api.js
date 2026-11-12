@@ -50,6 +50,7 @@ export const api = {
   tasks: (limit = 100) => request('GET', `/api/tasks?limit=${limit}`),
   task: (id) => request('GET', `/api/tasks/${id}`),
   instances: () => request('GET', '/api/instances'),
+  unlockInstance: (service, node) => request('POST', '/api/instances/unlock', { service, node }),
   archives: (service, node) =>
     request('GET', `/api/logs/services/${encodeURIComponent(service)}/nodes/${encodeURIComponent(node)}/archives`),
 }
