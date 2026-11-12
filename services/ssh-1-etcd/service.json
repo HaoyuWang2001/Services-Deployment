@@ -1,0 +1,17 @@
+{
+  "name": "ssh-1-etcd",
+  "description": "etcd单节点，启动在151上",
+  "workspace": "/home/w00921547/Services-Deployment/etcd",
+  "start": {
+    "script": "start-etcd.sh",
+    "args": [],
+    "log": "etcd.log"
+  },
+  "stop": {
+    "timeout": 10
+  },
+  "variables": {},
+  "nodes": [
+    "node4"
+  ]
+}
