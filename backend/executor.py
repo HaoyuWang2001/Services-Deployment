@@ -22,6 +22,12 @@ class ExecError(RuntimeError):
     pass
 
 
+# stop.sh may perform Kubernetes namespace deletion.  The Mooncake cleanup
+# scripts wait up to 180 seconds themselves, so the SSH wrapper must not time
+# out first and leave the instance registry stuck in ``stopping``.
+STOP_SCRIPT_TIMEOUT = 300
+
+
 def shell_ws(workspace: str) -> str:
     """workspace 字符集在配置加载时已严格校验（字母数字 ._-/ 与可选前导 ~），
     ~/ 形式不能加引号（需要 shell 展开），其余加引号。"""
@@ -472,9 +478,12 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
         if run_id:
             code_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_code")
             codes_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_codes.log")
-        res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint,
-                                        code_ref=code_ref, codes_ref=codes_ref),
-                             timeout=120)
+        try:
+            res = await pool.run(node, wrap(build_stop_script_command(service), hint=hint,
+                                            code_ref=code_ref, codes_ref=codes_ref),
+                                 timeout=STOP_SCRIPT_TIMEOUT)
+        except SSHError as e:
+            raise ExecError(f"stop.sh 执行失败: {e}") from e
         if not res.ok:
             raise ExecError(f"stop.sh 失败(exit={res.exit_code}): {(res.stderr or res.stdout).strip()[:500]}")
         outputs.append(res.stdout.strip())

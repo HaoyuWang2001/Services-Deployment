@@ -1,4 +1,4 @@
-export const ABNORMAL_HINT = '进程异常退出，不会自动执行 kill 或 stop.sh 清理；请先「停止」（走停止中进入已停止，期间执行清理），之后才能启动或删除'
+export const ABNORMAL_HINT = '进程异常退出，不会自动执行 kill 或 stop.sh 清理；可执行「停止」进入已停止，或直接「删除」（删除前会先执行清理）'
 
 const STATUS_TYPE = {
   running: 'success',
@@ -69,7 +69,7 @@ export function cleanupText(c) {
 export const STOPPABLE = ['running', 'abnormal', 'completed']
 export const STARTABLE = ['created', 'stopped', 'completed', 'notdeployed']
 export const RESTARTABLE = ['running']
-export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed', 'running']
+export const DELETABLE = ['created', 'stopped', 'completed', 'notdeployed', 'running', 'abnormal']
 
 const ELIGIBLE_SETS = {
   start: STARTABLE, stop: STOPPABLE, restart: RESTARTABLE, delete: DELETABLE,

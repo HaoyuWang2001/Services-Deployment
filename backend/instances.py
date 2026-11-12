@@ -31,7 +31,8 @@ TRANSIENT_STATES = ("starting", "stopping", "deleting")
 CAN_STOP = ("running", "abnormal", "completed")
 CAN_START = ("created", "stopped", "completed", "notdeployed")
 CAN_RESTART = ("running",)  # 重启 = 链接 停止→启动，仅运行中
-CAN_DELETE = ("created", "stopped", "completed", "notdeployed", "running")  # running = 链接 停止→删除
+CAN_DELETE = ("created", "stopped", "completed", "notdeployed", "running", "abnormal")
+# running / abnormal = 链接完整的停止清理后再删除
 
 
 def _now_iso() -> str:
@@ -200,6 +201,22 @@ class InstanceRegistry:
             return
         inst.stop_result = result
         self._save()
+
+    def recover_interrupted_transients(self) -> int:
+        """Recover states left transient when the backend process was interrupted.
+
+        No lifecycle task survives a backend restart.  Treat the instance as
+        running first; the next probe will immediately reconcile a dead process
+        to ``abnormal``/``exited`` while keeping every operation retryable.
+        """
+        recovered = 0
+        for inst in self._items.values():
+            if inst.state in TRANSIENT_STATES:
+                inst.state = "running"
+                recovered += 1
+        if recovered:
+            self._save()
+        return recovered
 
     def set_variables(self, service: str, node: str, variables: dict[str, str]) -> None:
         """更新实例的变量快照（显式携带变量的启动合并后调用）。"""

@@ -81,7 +81,7 @@ def _state_guidance(display: str, st=None, inst=None) -> str:
         if st is not None and st.exit_code is not None:
             code = f"（码={st.exit_code}）"
         return (f"实例处于异常态{code}，进程已异常退出且不会自动清理；"
-                "请先执行「停止」进入已停止状态，再启动或删除")
+                "可执行「停止」进入已停止状态，或直接「删除」（会先执行清理）")
     if display == "created":
         return "实例未启动（尚未运行过），无需停止；可直接「启动」或「删除」"
     if display == "notdeployed":
@@ -105,6 +105,7 @@ class TaskManager:
         self._used_run_ids: set[str] = set()
         self._start_locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._load()
+        self._recover_interrupted_work()
 
     def _start_lock(self, service: str, node: str) -> asyncio.Lock:
         key = (service, node)
@@ -138,6 +139,28 @@ class TaskManager:
             encoding="utf-8",
         )
         tmp.replace(self._file)
+
+    def _recover_interrupted_work(self) -> None:
+        """Close tasks/transient instance states left behind by a backend restart."""
+        changed = False
+        now = time.time()
+        for task in self._tasks:
+            if task.status != "running":
+                continue
+            task.status = "failed"
+            task.finished_at = now
+            changed = True
+            for sub in task.subtasks:
+                if sub.status == "running":
+                    sub.status = "failed"
+                    sub.error = "后端进程重启，操作已中断；实例状态已恢复，可重新操作"
+                    sub.finished_at = now
+        recovered = self.instances.recover_interrupted_transients()
+        if changed:
+            self._persist()
+        if changed or recovered:
+            log.warning("恢复后端中断状态: tasks=%s, instances=%s",
+                        int(changed), recovered)
 
     # ------------------------------------------------------------ 创建 ----
     def new_run_id(self) -> str:
@@ -342,20 +365,10 @@ class TaskManager:
                         sub.detail = out
                         self.instances.set_state(task.service, node_name, "stopped")
                         self.instances.set_stop_result(task.service, node_name, "ok")
-                    except executor.ExecError as e:
-                        msg = str(e)
-                        if "stop.sh 失败" in msg:
-                            m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
-                            code = m.group(1) if m else "?"
-                            self.instances.set_stop_result(
-                                task.service, node_name, f"failed:{code}")
-                        else:
-                            self.instances.set_stop_result(task.service, node_name, "killfail")
-                        # 状态回退：按探活判定（活→running，死→exited）
-                        st2 = await executor.service_status(self.pool, node, svc_cfg, run_id)
-                        self.instances.set_state(
-                            task.service, node_name,
-                            "running" if st2.state == "running" else "exited")
+                    except Exception as e:  # SSH timeout must not leave stopping behind
+                        await self._rollback_failed_stop(
+                            task.service, node_name, node, svc_cfg, run_id, e,
+                            fallback_state="running" if display == "running" else "exited")
                         raise
                     sub.run_id = run_id
                     sub.log_path = inst.log_path
@@ -379,19 +392,10 @@ class TaskManager:
                     self.instances.set_state(service.name, node_name, "stopping")
                     try:
                         out = await executor.stop_service(self.pool, node, service, run_id=run_id)
-                    except executor.ExecError as e:
-                        msg = str(e)
-                        if "stop.sh 失败" in msg:
-                            m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
-                            code = m.group(1) if m else "?"
-                            self.instances.set_stop_result(
-                                service.name, node_name, f"failed:{code}")
-                        else:
-                            self.instances.set_stop_result(service.name, node_name, "killfail")
-                        st2 = await executor.service_status(self.pool, node, service, run_id)
-                        self.instances.set_state(
-                            service.name, node_name,
-                            "running" if st2.state == "running" else "exited")
+                    except Exception as e:
+                        await self._rollback_failed_stop(
+                            service.name, node_name, node, service, run_id, e,
+                            fallback_state="running")
                         raise  # 中止重启，等待用户排查后重新操作
                     self.instances.set_stop_result(service.name, node_name, "ok")
                     sub.detail = out
@@ -408,7 +412,7 @@ class TaskManager:
 
             elif task.action == "delete":
                 # 状态机：created/stopped/completed/notdeployed 直接删除；
-                # running = 链接「停止→删除」，停止必须正常完成否则中止删除；abnormal 拒绝（先停止归一）
+                # running/abnormal = 链接「停止→删除」，停止必须正常完成否则中止删除
                 async with self._start_lock(task.service, node_name):
                     inst = self.instances.get(task.service, node_name)
                     if inst is None:
@@ -423,27 +427,17 @@ class TaskManager:
                         if display not in CAN_DELETE:
                             raise executor.ExecError(
                                 f"当前状态不允许删除；{_state_guidance(display, st, inst)}")
-                        if display == "running":
+                        if display in ("running", "abnormal"):
                             # 链接停止：完整停止管线（组杀 + stop.sh + 日志）
                             self.instances.set_state(task.service, node_name, "stopping")
                             try:
                                 out = await executor.stop_service(
                                     self.pool, node, svc_cfg, run_id=inst.run_id)
-                            except executor.ExecError as e:
-                                msg = str(e)
-                                if "stop.sh 失败" in msg:
-                                    m = re.search(r"stop\.sh 失败\(exit=(\d+)\)", msg)
-                                    code = m.group(1) if m else "?"
-                                    self.instances.set_stop_result(
-                                        task.service, node_name, f"failed:{code}")
-                                else:
-                                    self.instances.set_stop_result(
-                                        task.service, node_name, "killfail")
-                                st2 = await executor.service_status(
-                                    self.pool, node, svc_cfg, inst.run_id)
-                                self.instances.set_state(
-                                    task.service, node_name,
-                                    "running" if st2.state == "running" else "exited")
+                            except Exception as e:
+                                await self._rollback_failed_stop(
+                                    task.service, node_name, node, svc_cfg, inst.run_id, e,
+                                    fallback_state=("running" if display == "running"
+                                                    else "exited"))
                                 raise  # 停止未正常结束：中止删除，实例保留可重试
                             self.instances.set_stop_result(task.service, node_name, "ok")
                             self.instances.set_state(task.service, node_name, "deleting")
@@ -482,6 +476,30 @@ class TaskManager:
             self._persist()
 
     # ------------------------------------------------------ 生命周期辅助 ----
+    async def _rollback_failed_stop(self, service_name: str, node_name: str,
+                                    node: Node, service: ServiceConfig, run_id: str,
+                                    error: Exception, fallback_state: str) -> None:
+        """Record a failed cleanup and guarantee the instance is not transient."""
+        message = str(error)
+        if "stop.sh" in message:
+            match = re.search(r"stop\.sh 失败\(exit=(\d+)\)", message)
+            code = match.group(1) if match else "?"
+            self.instances.set_stop_result(service_name, node_name, f"failed:{code}")
+        else:
+            self.instances.set_stop_result(service_name, node_name, "killfail")
+
+        # A failed probe must not strand the registry in ``stopping`` either.
+        stable_state = fallback_state
+        try:
+            status = await executor.service_status(self.pool, node, service, run_id)
+            if status.state == "running":
+                stable_state = "running"
+            elif status.state in ("dead", "nopidfile", "nows"):
+                stable_state = "exited"
+        except Exception:  # noqa: BLE001 - retain the known pre-stop state
+            pass
+        self.instances.set_state(service_name, node_name, stable_state)
+
     def _record_ws(self, service: ServiceConfig, node_name: str) -> None:
         """登记部署历史：记录该 (服务, 节点) 使用过的 workspace（换目录后旧目录仍可被清理）。"""
         self.history.record(service.name, node_name, service.workspace)

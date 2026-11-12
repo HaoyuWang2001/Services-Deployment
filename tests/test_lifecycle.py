@@ -83,6 +83,91 @@ def test_registry_lifecycle(tmp_path):
     assert InstanceRegistry(tmp_path).get("svc", "n1") is None
 
 
+def test_backend_restart_recovers_interrupted_stop(tmp_path):
+    """A backend restart must not leave an instance/task permanently transient."""
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    tm.instances.set_state("svc", "n1", "stopping")
+    tm._tasks = [Task(id="t1", service="svc", action="stop", nodes=["n1"],
+                      subtasks=[SubTask(node="n1")])]
+    tm._persist()
+
+    recovered = TaskManager(pool=None, store=tm.store,
+                            instances=InstanceRegistry(tmp_path),
+                            data_dir=tmp_path, history=tm.history)
+    assert recovered.instances.get("svc", "n1").state == "running"
+    assert recovered._tasks[0].status == "failed"
+    assert recovered._tasks[0].subtasks[0].status == "failed"
+    assert "可重新操作" in recovered._tasks[0].subtasks[0].error
+
+
+def test_stop_transport_failure_rolls_back_transient_state(tmp_path, monkeypatch):
+    """SSH/transport failures are retryable and never strand state=stopping."""
+    import asyncio
+    from backend import executor
+    from backend.ssh import SSHError
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    tm.instances.set_state("svc", "n1", "running")
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("dead", pid=123, exit_code=7)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None):
+        raise SSHError("timeout")
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(
+        Task(id="t1", service="svc", action="stop", nodes=["n1"]),
+        svc, "n1", sub))
+
+    assert sub.status == "failed"
+    inst = tm.instances.get("svc", "n1")
+    assert inst.state == "exited"
+    assert inst.stop_result == "killfail"
+
+
+def test_delete_abnormal_runs_cleanup_before_unregister(tmp_path, monkeypatch):
+    """An abnormal instance can be deleted, but cleanup remains mandatory."""
+    import asyncio
+    from backend import executor
+    from backend.tasks import SubTask
+
+    tm = make_manager(tmp_path)
+    svc = tm.store.service("svc")
+    tm.instances.create("svc", "n1", "run-1", "/l", cfg=svc)
+    tm.instances.set_state("svc", "n1", "exited")
+    called = {"stop": 0}
+
+    async def fake_status(pool, node, svc_cfg, run_id=None):
+        return executor.ServiceStatus("dead", pid=123, exit_code=7)
+
+    async def fake_stop(pool, node, svc_cfg, run_id=None):
+        called["stop"] += 1
+        return "cleaned"
+
+    monkeypatch.setattr(executor, "service_status", fake_status)
+    monkeypatch.setattr(executor, "stop_service", fake_stop)
+
+    sub = SubTask(node="n1")
+    asyncio.run(tm._run_subtask(
+        Task(id="t1", service="svc", action="delete", nodes=["n1"]),
+        svc, "n1", sub))
+
+    assert sub.status == "success"
+    assert called["stop"] == 1
+    assert tm.instances.get("svc", "n1") is None
+
+
 def test_registry_migration_from_stopped_flag(tmp_path):
     """旧格式（stopped 布尔标记、无 state）迁移加载。"""
     import json

@@ -1,9 +1,11 @@
 """executor 命令构建与解析测试（纯函数，不依赖 SSH）。"""
 from __future__ import annotations
 
+import asyncio
 
-from backend.config import ServiceConfig
+from backend.config import Node, ServiceConfig
 from backend.executor import (
+    STOP_SCRIPT_TIMEOUT,
     build_kill_stop_command,
     build_log_read_command,
     build_start_command,
@@ -13,7 +15,9 @@ from backend.executor import (
     parse_pid,
     parse_status,
     shell_ws,
+    stop_service,
 )
+from backend.ssh import RunResult
 
 
 def make_svc(**over) -> ServiceConfig:
@@ -147,6 +151,26 @@ def test_stop_script_command():
     svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
     cmd = build_stop_script_command(svc)
     assert cmd == "cd /data/mooncake/master && bash stop.sh"
+
+
+def test_stop_script_timeout_exceeds_namespace_cleanup_timeout():
+    """The SSH wrapper must outlive stop.sh's 180s Kubernetes wait."""
+    class FakePool:
+        def __init__(self):
+            self.timeouts = []
+
+        async def run(self, node, command, timeout=None):
+            self.timeouts.append(timeout)
+            return RunResult(0, "ok", "")
+
+    pool = FakePool()
+    node = Node(name="n1", ip="1.1.1.1", username="root", port=22,
+                private_key="~/.ssh/id_rsa", connect_timeout=10)
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    asyncio.run(stop_service(pool, node, svc, run_id="r1"))
+
+    assert pool.timeouts[-1] == STOP_SCRIPT_TIMEOUT
+    assert STOP_SCRIPT_TIMEOUT > 180
 
 
 def test_status_command_tick_check():
