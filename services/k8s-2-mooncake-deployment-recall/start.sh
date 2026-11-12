@@ -31,7 +31,7 @@ export MOONCAKE_SCRIPT_CONFIGMAP="${MOONCAKE_SCRIPT_CONFIGMAP:-mooncake-startup-
 MOONCAKE_MASTER_REPLICAS="${MOONCAKE_MASTER_REPLICAS:-1}"
 
 # Number of Store Pods per eligible Kubernetes Node.
-STORE_PER_NODE="${STORE_PER_NODE:-1}"
+STORE_PER_NODE="${STORE_PER_NODE:-2}"
 
 # Store DaemonSet metadata label used for safe scale-down cleanup.
 STORE_MANAGED_LABEL_KEY="mooncake.openai.com/managed-by"
