@@ -1,18 +1,27 @@
 {
   "name": "k8s-0-mooncake-build-image",
-  "description": "编译mooncake及whl包，并发布到四节点上，完成whl安装",
+  "description": "在编译容器内构建 Mooncake，打包 runtime 镜像（含 whl 安装与校验）并导出 tar",
   "nodes": [
     "node4-compile"
   ],
   "workspace": "/home/w00921547/Services-Deployment/mooncake-compile",
   "start": {
-    "script": "build-mooncake-image.sh",
+    "script": "build-mooncake-runtime-image.sh",
     "args": [],
-    "log": "build-mooncake-image.log"
+    "log": "build-mooncake-runtime-image.log"
   },
   "stop": {
     "timeout": 10
   },
-  "variables": {},
+  "deploy": {
+    "files": [
+      "build-mooncake-runtime-image.sh",
+      "build-mooncake.sh"
+    ]
+  },
+  "variables": {
+    "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
+    "TAR_OUTPUT_DIR": "/home/w00921547/downloads/mooncake-runtime-images"
+  },
   "allow_duplicate_start": false
 }
