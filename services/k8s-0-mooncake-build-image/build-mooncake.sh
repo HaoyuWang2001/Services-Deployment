@@ -1,4 +1,3 @@
-[root@151e8d38738c Mooncake]# cat build_mooncake.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
