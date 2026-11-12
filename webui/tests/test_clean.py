@@ -5,10 +5,10 @@ import asyncio
 
 import pytest
 
-from backend.deploy_history import DeployHistory
-from backend.executor import build_clean_command
-from backend.tasks import TaskError
-from tests.test_lifecycle import make_manager
+from webui.backend.deploy_history import DeployHistory
+from webui.backend.executor import build_clean_command
+from webui.backend.tasks import TaskError
+from webui.tests.test_lifecycle import make_manager
 
 
 def test_deploy_history_roundtrip(tmp_path):
@@ -35,7 +35,7 @@ def test_deploy_history_roundtrip(tmp_path):
 
 def test_build_clean_command_guards():
     cmd = build_clean_command(
-        pytest.importorskip("backend.config").ServiceConfig(name="svc", workspace="/data/svc"),
+        pytest.importorskip("webui.backend.config").ServiceConfig(name="svc", workspace="/data/svc"),
         ["/data/svc", "/data/old"])
     # 命令回显
     assert 'echo "\\$ rm -rf -- /data/svc"' in cmd
@@ -48,7 +48,7 @@ def test_build_clean_command_guards():
     assert "/run/svc.pid" in cmd
     # ~/ 形式不加引号（保持展开）
     cmd2 = build_clean_command(
-        pytest.importorskip("backend.config").ServiceConfig(name="svc", workspace="~/s"),
+        pytest.importorskip("webui.backend.config").ServiceConfig(name="svc", workspace="~/s"),
         ["~/s"])
     assert "[ ! -d ~/s ]" in cmd2
 

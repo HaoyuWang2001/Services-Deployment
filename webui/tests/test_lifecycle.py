@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from backend.config import ACTIONS, ConfigStore
-from backend.instances import InstanceRegistry
-from backend.tasks import Task, TaskManager
+from webui.backend.config import ACTIONS, ConfigStore
+from webui.backend.instances import InstanceRegistry
+from webui.backend.tasks import Task, TaskManager
 
 
 def make_manager(tmp_path: Path) -> TaskManager:
@@ -23,7 +23,7 @@ def make_manager(tmp_path: Path) -> TaskManager:
     (d / "start.sh").write_text("#!/bin/bash\ntrue\n", encoding="utf-8")
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
     registry = InstanceRegistry(tmp_path)
-    from backend.deploy_history import DeployHistory
+    from webui.backend.deploy_history import DeployHistory
     history = DeployHistory(tmp_path)
     return TaskManager(pool=None, store=store, instances=registry,
                        data_dir=tmp_path, history=history)
@@ -203,8 +203,8 @@ def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
     """_launch：沿用实例快照注入启动命令；显式携带变量时启动成功后落库新快照。"""
     import asyncio
 
-    from backend.config import Node
-    from backend.tasks import SubTask
+    from webui.backend.config import Node
+    from webui.backend.tasks import SubTask
 
     tm = make_manager(tmp_path)
     node = Node(name="n1", ip="1.1.1.1", username="root", port=22,
@@ -217,7 +217,7 @@ def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
         captured["args"] = args
         return {"pid": 42, "log_path": "/l", "uploaded": 0}
 
-    monkeypatch.setattr("backend.tasks.executor.start_service", fake_start)
+    monkeypatch.setattr("webui.backend.tasks.executor.start_service", fake_start)
 
     tm.instances.create("svc", "n1", "run-1", "/l",
                         variables={"A": "1", "B": "9"}, args=["--base", "--frozen"])
@@ -240,8 +240,8 @@ def test_launch_uses_and_persists_snapshot(tmp_path, monkeypatch):
 
 
 def test_create_dirs_command_cleans_stale_pidfile():
-    from backend.config import ServiceConfig
-    from backend.executor import build_create_dirs_command
+    from webui.backend.config import ServiceConfig
+    from webui.backend.executor import build_create_dirs_command
 
     svc = ServiceConfig(name="svc", workspace="/data/svc")
     cmd = build_create_dirs_command(svc, "20261028-120000")
@@ -268,8 +268,8 @@ def test_instance_config_snapshot_roundtrip(tmp_path):
 def test_stop_and_delete_allowed_after_service_deleted(tmp_path, monkeypatch):
     """服务删除后：停止/删除用实例快照配置完成；启动被拒绝。"""
     import asyncio
-    from backend import executor
-    from backend.tasks import SubTask
+    from webui.backend import executor
+    from webui.backend.tasks import SubTask
 
     tm = make_manager(tmp_path)
     svc = tm.store.service("svc")
@@ -317,7 +317,7 @@ def test_stop_and_delete_allowed_after_service_deleted(tmp_path, monkeypatch):
 def test_stop_legacy_without_snapshot_gives_guidance(tmp_path):
     """无快照旧实例 + 服务已删：拒绝操作并给出手动清理指引。"""
     import asyncio
-    from backend.tasks import SubTask
+    from webui.backend.tasks import SubTask
 
     tm = make_manager(tmp_path)
     tm.instances.create("svc", "n1", "run-1", "/l")   # 无 cfg 快照
@@ -332,7 +332,7 @@ def test_stop_legacy_without_snapshot_gives_guidance(tmp_path):
 def test_refresh_uses_snapshot_and_backfills(tmp_path, monkeypatch):
     """服务删除后刷新用快照探活；旧实例在服务存在时自动补齐快照。"""
     import asyncio
-    from backend import executor
+    from webui.backend import executor
 
     tm = make_manager(tmp_path)
 
@@ -357,8 +357,8 @@ def test_refresh_uses_snapshot_and_backfills(tmp_path, monkeypatch):
 def test_stop_injects_instance_variable_snapshot(tmp_path, monkeypatch):
     """手动停止注入实例变量快照（与启动/自动清理一致）。"""
     import asyncio
-    from backend import executor
-    from backend.tasks import SubTask
+    from webui.backend import executor
+    from webui.backend.tasks import SubTask
 
     tm = make_manager(tmp_path)
     svc = tm.store.service("svc")
@@ -385,8 +385,8 @@ def test_stop_injects_instance_variable_snapshot(tmp_path, monkeypatch):
 def test_stop_legacy_instance_falls_back_to_service_variables(tmp_path, monkeypatch):
     """旧实例（无变量快照）手动停止回退 service.json 默认变量。"""
     import asyncio
-    from backend import executor
-    from backend.tasks import SubTask
+    from webui.backend import executor
+    from webui.backend.tasks import SubTask
 
     tm = make_manager(tmp_path)
     svc = tm.store.service("svc")
@@ -412,7 +412,7 @@ def test_stop_legacy_instance_falls_back_to_service_variables(tmp_path, monkeypa
 def test_refresh_surfaces_deploy_heartbeat(tmp_path, monkeypatch):
     """运行中 + 心跳 DEGRADED/STARTING → 展示 degraded/deploying。"""
     import asyncio
-    from backend import executor
+    from webui.backend import executor
 
     tm = make_manager(tmp_path)
     svc = tm.store.service("svc")

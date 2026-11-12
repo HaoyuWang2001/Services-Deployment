@@ -1,7 +1,7 @@
 """实例状态机：reconcile 调和矩阵 + cleanup_display + 操作门禁集合。"""
 from __future__ import annotations
 
-from backend.instances import (
+from webui.backend.instances import (
     CAN_DELETE,
     CAN_START,
     CAN_STOP,
@@ -50,7 +50,7 @@ def test_reconcile_nopidfile_probe():
 
 
 def test_gating_sets():
-    from backend.instances import CAN_RESTART
+    from webui.backend.instances import CAN_RESTART
     # deploying/degraded 为心跳派生态，进程存活 → 与 running 同门禁（不可启动）
     assert set(CAN_STOP) == {"running", "abnormal", "completed", "degraded", "deploying"}
     assert set(CAN_START) == {"created", "stopped", "completed", "notdeployed"}

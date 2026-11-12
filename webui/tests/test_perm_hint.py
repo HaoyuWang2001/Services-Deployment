@@ -1,7 +1,7 @@
 """权限错误提示测试。"""
 from __future__ import annotations
 
-from backend.deployer import perm_hint
+from webui.backend.deployer import perm_hint
 
 
 def test_perm_hint_on_permission_errors():

@@ -1,6 +1,6 @@
 ---
 name: webui-design
-description: Use when editing, reviewing, or adding any UI in this repo's WebUI (web/src/**, Vue3 + Element Plus). Covers design tokens, Element Plus theming, dark mode, danger/status color semantics, typography, spacing, empty states, copy, and accessibility rules distilled from anthropics/frontend-design, Vercel Web Interface Guidelines, and emilkowalski/design-eng.
+description: Use when editing, reviewing, or adding any UI in this repo's WebUI (webui/web/src/**, Vue3 + Element Plus). Covers design tokens, Element Plus theming, dark mode, danger/status color semantics, typography, spacing, empty states, copy, and accessibility rules distilled from anthropics/frontend-design, Vercel Web Interface Guidelines, and emilkowalski/design-eng.
 ---
 
 # WebUI 设计规范（本仓库）
@@ -33,7 +33,7 @@ description: Use when editing, reviewing, or adding any UI in this repo's WebUI 
 | `--sd-radius` | 面板圆角（4px，与 EP 一致） |
 | `--sd-panel-padding` | 卡片内容 padding（16px） |
 | `--sd-term-bg/-fg/-muted/-accent/-warn` | 终端配色（亮/暗两套） |
-| `--sd-node-1..8` | 节点标识色（唯一来源 `web/src/ui/nodeColors.js`） |
+| `--sd-node-1..8` | 节点标识色（唯一来源 `webui/web/src/ui/nodeColors.js`） |
 
 字号层级：12 辅助 / 13 表单标签与说明 / 14 正文基准 / 16 页面标题（600）。不要引入 15px。
 

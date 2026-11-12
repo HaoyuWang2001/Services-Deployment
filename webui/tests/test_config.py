@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.config import ClusterConfig, ServiceConfig, load_cluster, load_services
+from webui.backend.config import ClusterConfig, ServiceConfig, load_cluster, load_services
 
 
 def _write(tmp_path: Path, name: str, data) -> Path:
@@ -126,7 +126,7 @@ def test_clusterconfig_node_lookup():
 
 def test_reload_cluster_hot_reload_and_keep_last_good(tmp_path):
     """GET /nodes 场景：热重读 cluster.json；失败时保留上次可用配置。"""
-    from backend.config import ConfigStore
+    from webui.backend.config import ConfigStore
     cluster = _write(tmp_path, "cluster.json",
                      {"nodes": [{"name": "n1", "ip": "1.1.1.1"}]})
     store = ConfigStore(cluster_path=cluster, services_dir=tmp_path / "services")
@@ -153,7 +153,7 @@ def test_reload_cluster_hot_reload_and_keep_last_good(tmp_path):
 
 # ------------------------------------------------------------ 写回/重载 ----
 def test_save_service_json_roundtrip(tmp_path):
-    from backend.config import save_service_json
+    from webui.backend.config import save_service_json
     d = _svc_dir(tmp_path, "svc-w", {"name": "svc-w", "workspace": "/data/a",
                                      "variables": {"K": "1"}})
     raw = json.loads((d / "service.json").read_text(encoding="utf-8"))
@@ -173,7 +173,7 @@ def test_save_service_json_roundtrip(tmp_path):
 
 
 def test_save_service_json_invalid_not_written(tmp_path):
-    from backend.config import save_service_json
+    from webui.backend.config import save_service_json
     d = _svc_dir(tmp_path, "svc-bad", {"name": "svc-bad", "workspace": "/data/a"})
     original = (d / "service.json").read_text(encoding="utf-8")
     raw = json.loads(original)
@@ -184,7 +184,7 @@ def test_save_service_json_invalid_not_written(tmp_path):
 
 
 def test_save_service_json_missing_script(tmp_path):
-    from backend.config import save_service_json
+    from webui.backend.config import save_service_json
     d = _svc_dir(tmp_path, "svc-m", {"name": "svc-m", "workspace": "/data/a"})
     raw = json.loads((d / "service.json").read_text(encoding="utf-8"))
     raw["start"] = {"script": "nope.sh"}
@@ -214,8 +214,8 @@ def test_service_nodes_bad_entry():
 
 
 def test_task_validate_nodes_whitelist_and_hidden(tmp_path):
-    from backend.config import ConfigStore
-    from backend.tasks import TaskError, TaskManager
+    from webui.backend.config import ConfigStore
+    from webui.backend.tasks import TaskError, TaskManager
 
     cluster = _write(tmp_path, "cluster.json", {
         "nodes": [{"name": "node1", "ip": "1.1.1.1"},
@@ -227,7 +227,7 @@ def test_task_validate_nodes_whitelist_and_hidden(tmp_path):
     for name, extra in [("etcd", {"nodes": ["node4"]}), ("tmpl", {"hidden": True})]:
         _svc_dir(svc_dir, name, {"name": name, "workspace": f"/data/{name}", **extra})
     store = ConfigStore(cluster_path=cluster, services_dir=svc_dir)
-    from backend.deploy_history import DeployHistory
+    from webui.backend.deploy_history import DeployHistory
     tm = TaskManager(pool=None, store=store, instances=None,
                      data_dir=tmp_path, history=DeployHistory(tmp_path))
 

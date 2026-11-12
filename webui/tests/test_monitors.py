@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from backend.executor import MAX_STDOUT, build_monitor_command, trim_output
-from backend.monitors import MonitorStore
+from webui.backend.executor import MAX_STDOUT, build_monitor_command, trim_output
+from webui.backend.monitors import MonitorStore
 
 
 def test_monitor_store_crud_roundtrip(tmp_path):
@@ -56,7 +56,7 @@ def test_monitor_update_missing_id(tmp_path):
 
 
 def test_monitor_field_validation(tmp_path):
-    from backend.monitors import Monitor
+    from webui.backend.monitors import Monitor
     store = MonitorStore(tmp_path)
     with pytest.raises(ValueError, match="名称"):
         store.create("", "x", 2)

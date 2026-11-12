@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 
-from backend.config import ServiceConfig
-from backend.executor import (
+from webui.backend.config import ServiceConfig
+from webui.backend.executor import (
     build_kill_stop_command,
     build_log_read_command,
     build_start_command,

@@ -55,14 +55,14 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 ### 3. 启动后端
 
 ```bash
-python -m backend.main --host 127.0.0.1 --port 8310
+python -m webui.backend.main --host 127.0.0.1 --port 8310
 ```
 
 - 打开 `http://127.0.0.1:8310`（WebUI）或 `http://127.0.0.1:8310/docs`（OpenAPI 文档）
 - 需要局域网其他机器（如 Windows PC 的浏览器 / Agent）访问时，改用 `--host 0.0.0.0`
 - `--host` / `--port` 也可经环境变量 `HOST` / `PORT` 指定（命令行参数优先）
 - 已内置优雅关闭超时（5s）：开着日志/监控页面时 Ctrl+C 也能可靠退出
-- 仓库已附带构建好的 WebUI（`backend/static/`）；如需修改前端：`cd web && npm install && npm run build`
+- 仓库已附带构建好的 WebUI（`webui/backend/static/`）；如需修改前端：`cd webui/web && npm install && npm run build`
 
 ## 服务定义：`services/<服务名>/`
 
@@ -244,9 +244,11 @@ websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h
 ```
 ├── cluster.json          # 集群配置（唯一真源）
 ├── services/             # 服务定义（service.json + 脚本）
-├── backend/              # FastAPI 后端（api / ssh / deployer / executor / tasks / logs）
-├── web/                  # Vue3 + Element Plus 前端源码
-├── tests/                # 单元测试（pytest）
+├── webui/                # WebUI 全部内容
+│   ├── backend/          # FastAPI 后端（api / ssh / deployer / executor / tasks / logs）
+│   │   └── static/       # 构建产物（后端直接托管）
+│   ├── web/              # Vue3 + Element Plus 前端源码
+│   └── tests/            # 单元测试（pytest）
 └── data/                 # 运行时状态（tasks.json / instances.json，自动生成）
 ```
 
@@ -266,10 +268,10 @@ websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h
   3. 旧的 root 实例按停止失败提示（LEGACY）在节点上手动清理后重新启动
   4. `cluster.json` 修改 `username` 并按需启用 `sudo`，重新加载配置
 - 日志按启动时间归档永久保留在节点上，如需清理请自行删除 `logs/` 下的历史批次目录
-- 开发调试前端：`cd web && npm run dev`（Vite 代理到 `localhost:8310`）
+- 开发调试前端：`cd webui/web && npm run dev`（Vite 代理到 `localhost:8310`）
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -q
+python -m pytest webui/tests -q
 ```

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, PrivateAttr, ValidationError, field_valid
 
 log = logging.getLogger("sd.config")
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 CLUSTER_JSON = Path(os.environ.get("CLUSTER_JSON") or REPO_ROOT / "cluster.json")
 SERVICES_DIR = Path(os.environ.get("SERVICES_DIR") or REPO_ROOT / "services")

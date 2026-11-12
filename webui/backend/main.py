@@ -1,6 +1,6 @@
 """FastAPI 应用装配与入口。
 
-启动：python -m backend.main [--host 127.0.0.1] [--port 8310]
+启动：python -m webui.backend.main [--host 127.0.0.1] [--port 8310]
 （--host/--port 亦可经环境变量 HOST/PORT 指定，命令行参数优先）
 """
 from __future__ import annotations
@@ -42,8 +42,8 @@ max-width:520px;line-height:1.8}code{background:#eef1f5;padding:2px 6px;border-r
 <h2 style="margin-top:0">API 已就绪，WebUI 尚未构建</h2>
 <p>后端 API 正常运行，可在 <a href="/docs">/docs</a> 查看 OpenAPI 文档。</p>
 <p>构建 WebUI：</p>
-<p><code>cd web &amp;&amp; npm install &amp;&amp; npm run build</code></p>
-<p>构建产物会输出到 <code>backend/static/</code>，刷新本页即可。</p>
+<p><code>cd webui/web &amp;&amp; npm install &amp;&amp; npm run build</code></p>
+<p>构建产物会输出到 <code>webui/backend/static/</code>，刷新本页即可。</p>
 </div></body></html>"""
 
 

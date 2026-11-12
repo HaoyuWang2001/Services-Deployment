@@ -1,7 +1,7 @@
 """executor 新增功能测试：端口监控解析。"""
 from __future__ import annotations
 
-from backend.executor import build_ports_command, parse_ports
+from webui.backend.executor import build_ports_command, parse_ports
 
 
 SS_OUTPUT = """\
