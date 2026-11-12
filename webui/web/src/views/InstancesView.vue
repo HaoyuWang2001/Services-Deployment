@@ -133,7 +133,7 @@ import { trackTaskGroup } from '../taskNotify'
 import PageHeader from '../components/PageHeader.vue'
 import { isDark } from '../theme'
 import {
-  ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE,
+  ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE, TRANSIENT,
   cleanupText, cleanupType, isEligible, statusText, statusType,
 } from '../instanceStatus'
 
