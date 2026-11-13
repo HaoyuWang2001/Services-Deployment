@@ -11,7 +11,7 @@
 #      到宿主机 ${BUILD_OUTPUT_DIR}（成功后保留）
 #   2. 以基础镜像新建 runtime 容器，产物按原位置放回 /home/Mooncake/outputs，
 #      并新建 bin/lib/dist 三个目录、对照产物内容重建全部软链（绝对路径）
-#   3. pip3 安装 wheel
+#   3. pip3 安装 wheel（运行时注入代理，不固化进基础镜像）
 #   4. /home/check-mooncake-ldd.sh 校验
 #   5. /home/check-mooncake-wheel.sh 校验
 #   6. docker commit → <IMAGE_NAME>:<YYYYmmddHHMM>.<COMMIT_ID>
@@ -30,6 +30,10 @@
 #   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    编译容器内产物根（docker cp 源）
 #   BUILD_OUTPUT_DIR   (/home/Mooncake/outputs)    宿主机产物落地目录（成功后保留）
 #   TAR_OUTPUT_DIR     (/home/w00921547/downloads/mooncake-runtime-images)
+#   PROXY_IP           (空 = 不使用代理)             pip 安装时的代理地址（常变，运行期传入）
+#   PROXY_PORT         (3128)
+#   PIP_NO_PROXY       (192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
+#                       127.0.0.1,localhost,local,.local)
 #
 set -Eeuo pipefail
 
@@ -44,6 +48,11 @@ BUILD_OUTPUT_DIR="${BUILD_OUTPUT_DIR:-/home/Mooncake/outputs}"
 TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-/home/w00921547/downloads/mooncake-runtime-images}"
 CHECK_LDD="/home/check-mooncake-ldd.sh"
 CHECK_WHEEL="/home/check-mooncake-wheel.sh"
+
+# pip 安装代理（PROXY_IP 常变，运行期传入，不固化进基础镜像）
+PROXY_IP="${PROXY_IP:-}"
+PROXY_PORT="${PROXY_PORT:-3128}"
+PIP_NO_PROXY="${PIP_NO_PROXY:-192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,127.0.0.1,localhost,local,.local}"
 
 STEP_NO=0
 CURRENT_STEP=""
@@ -178,10 +187,28 @@ INFO "全部软链校验通过（容器内可解析）"
 # ============================================================
 # STEP 3. 安装 wheel
 # ============================================================
-STEP "pip3 安装 wheel"
+STEP "pip3 安装 wheel（运行时注入代理，不固化进镜像）"
 
-docker exec "${RUNTIME_CONTAINER}" bash -c \
-    "pip3 install ${MOONCAKE_OUTPUTS}/dist/mooncake_transfer_engine*.whl"
+PIP_EXEC_ENV=()
+if [[ -n "${PROXY_IP}" ]]; then
+    PROXY_URL="http://${PROXY_IP}:${PROXY_PORT}"
+    INFO "代理: ${PROXY_URL}（no_proxy=${PIP_NO_PROXY}）"
+    PIP_EXEC_ENV=(
+        -e "http_proxy=${PROXY_URL}"
+        -e "https_proxy=${PROXY_URL}"
+        -e "no_proxy=${PIP_NO_PROXY}"
+    )
+else
+    WARN "未提供 PROXY_IP：pip 安装将不使用代理（如需代理请在「变量覆盖」中填写 PROXY_IP）"
+fi
+
+if [[ ${#PIP_EXEC_ENV[@]} -gt 0 ]]; then
+    docker exec "${PIP_EXEC_ENV[@]}" "${RUNTIME_CONTAINER}" bash -c \
+        "pip3 install ${MOONCAKE_OUTPUTS}/dist/mooncake_transfer_engine*.whl"
+else
+    docker exec "${RUNTIME_CONTAINER}" bash -c \
+        "pip3 install ${MOONCAKE_OUTPUTS}/dist/mooncake_transfer_engine*.whl"
+fi
 
 # ============================================================
 # STEP 4-5. 校验脚本
