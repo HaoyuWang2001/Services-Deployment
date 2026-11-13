@@ -47,10 +47,8 @@
       <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
         <span class="label">变量覆盖：</span>
         <div class="var-inputs">
-          <div v-for="(_, k) in cfg.variables" :key="k" class="var-input">
-            <span class="var-key">{{ k }}</span>
-            <el-input v-model="varsOverride[k]" size="small" style="width: 220px" :placeholder="`默认 ${cfg.variables[k]}`" />
-          </div>
+          <VarOverrideRow v-for="(def, k) in cfg.variables" :key="k"
+                          v-model="varsOverride[k]" :var-name="k" :default-value="def" />
         </div>
       </div>
       <div class="args-form">
@@ -276,6 +274,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT, fmtTime, fmtTimeRel } from '../api'
 import { trackTask } from '../taskNotify'
 import PageHeader from '../components/PageHeader.vue'
+import VarOverrideRow from '../components/VarOverrideRow.vue'
 import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE, TRANSIENT,
@@ -722,9 +721,7 @@ onDeactivated(() => clearInterval(timer))
 .args-input { width: 380px; }
 .var-form { margin-bottom: 10px; display: flex; align-items: flex-start; }
 .var-form .label, .args-form .label { height: 24px; display: inline-flex; align-items: center; flex-shrink: 0; }
-.var-inputs { display: flex; flex-wrap: wrap; gap: 8px; }
-.var-input { display: flex; align-items: center; gap: 6px; }
-.var-key { font-size: 12px; color: var(--el-text-color-regular); }
+.var-inputs { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
 .auto-switch { margin-left: var(--sd-space-3); }
