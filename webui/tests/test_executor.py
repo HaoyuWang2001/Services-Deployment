@@ -1,0 +1,276 @@
+"""executor 命令构建与解析测试（纯函数，不依赖 SSH）。"""
+from __future__ import annotations
+
+import asyncio
+
+from webui.backend.config import Node, ServiceConfig
+from webui.backend.executor import (
+    STOP_SCRIPT_TIMEOUT,
+    build_kill_stop_command,
+    build_log_read_command,
+    build_start_command,
+    build_status_command,
+    build_stop_script_command,
+    parse_archives,
+    parse_pid,
+    parse_status,
+    shell_ws,
+    stop_service,
+)
+from webui.backend.ssh import RunResult
+
+
+def make_svc(**over) -> ServiceConfig:
+    data = {
+        "name": "mooncake-master",
+        "workspace": "/data/mooncake/master",
+        "start": {"script": "start.sh", "args": ["--port", "237 9"], "log": "master.log"},
+        "stop": {"timeout": 5},
+        "variables": {"MASTER_PORT": "2379"},
+    }
+    data.update(over)
+    return ServiceConfig(**data)
+
+
+# ------------------------------------------------------------ start 命令 ----
+def test_start_command_structure():
+    svc = make_svc()
+    cmd = build_start_command(svc, "20261025-120000", {"MASTER_PORT": "2379"})
+    assert "cd /data/mooncake/master" in cmd
+    assert "mkdir -p logs/20261025-120000 run" in cmd
+    # setsid 独立进程组 + 指纹写入 pid 文件
+    assert "setsid nohup env MASTER_PORT=2379 bash -c " in cmd
+    # 续写模式：分隔符行 + >> 追加重定向
+    assert "实例启动 =====" in cmd
+    assert '>> logs/20261025-120000/master.log;' in cmd
+    assert ">> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
+    # 退出码双写：最近一次 + 历史
+    assert "> logs/20261025-120000/exit_code;" in cmd
+    assert ">> logs/20261025-120000/exit_codes.log;" in cmd
+    assert "exit $rc" in cmd
+    assert 'echo "$pid $tick" > run/mooncake-master.pid' in cmd
+    # 带空格的参数仍被安全引用（嵌套于 bash -c 内层）
+    assert "237 9" in cmd
+    assert "--port" in cmd
+    assert "< /dev/null & pid=$!" in cmd
+
+
+def test_start_command_tilde_workspace_unquoted():
+    svc = make_svc(workspace="~/mc")
+    cmd = build_start_command(svc, "r1", {})
+    assert "cd ~/mc" in cmd
+    assert "cd '~/mc'" not in cmd
+
+
+def test_start_command_no_env():
+    svc = make_svc()
+    cmd = build_start_command(svc, "r1", {})
+    assert "setsid nohup bash -c " in cmd
+    assert "env " not in cmd.split("bash -c")[0].split("nohup")[-1]
+
+
+def test_start_command_special_chars_in_var():
+    svc = make_svc()
+    cmd = build_start_command(svc, "r1", {"TOKEN": "a b'c"})
+    assert "env TOKEN='a b'\"'\"'c'" in cmd
+
+
+def test_start_command_args_override_and_hint():
+    """显式 args 替换静态参数；日志提示行含启动命令与变量个数（不含变量值）。"""
+    svc = make_svc()
+    cmd = build_start_command(svc, "r1", {"TOKEN": "secret"}, args=["--extra", "a b"])
+    assert "$ bash start.sh" in cmd          # 启动命令提示行
+    assert "（变量 1 个）" in cmd             # 只提示变量个数，不落值
+    assert "--extra" in cmd and "a b" in cmd
+    assert "--port" not in cmd               # 快照替换：静态参数不再出现
+    hint_part = cmd.split("printf")[1].split(">>")[0]
+    assert "secret" not in hint_part and "TOKEN" not in hint_part  # 提示行不含变量名/值
+
+
+def test_start_command_default_args_from_service():
+    cmd = build_start_command(make_svc(), "r1", {})
+    assert "--port" in cmd                   # args 缺省时使用 service.start.args
+
+
+def test_start_command_auto_cleanup_when_stop_script():
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 5})
+    cmd = build_start_command(svc, "r1", {})
+    assert "自动清理 (stop.sh) =====" in cmd          # 清理分隔符
+    assert "bash stop.sh 2>&1" in cmd                  # 自动执行 stop.sh
+    assert "cout=$(bash stop.sh 2>&1); crc=$?" in cmd
+    assert "[stop.sh 退出码=%s]" in cmd                # 记录 stop.sh 退出码
+    assert "exit $rc" in cmd                           # 实例退出码不受 stop.sh 影响
+
+
+def test_start_command_no_auto_cleanup_without_stop_script():
+    cmd = build_start_command(make_svc(), "r1", {})
+    assert "自动清理" not in cmd
+    assert "stop.sh" not in cmd
+
+
+# ------------------------------------------------------------- stop 命令 ----
+def test_stop_command_strict_semantics():
+    svc = make_svc()
+    cmd = build_kill_stop_command(svc)
+    assert "read pid tick < run/mooncake-master.pid" in cmd
+    # 指纹校验：旧格式拒绝 + PID 复用拒绝
+    assert 'echo LEGACY=$pid' in cmd
+    assert 'echo PIDREUSED=$pid' in cmd
+    # 组判定：组长死但组未空 → 继续整组清剿（不提前 STOPPED）
+    assert ("if ! kill -0 $pid 2>/dev/null; then "
+            "if ! kill -0 -- -$pid 2>/dev/null; then echo STOPPED=$pid; exit 0; fi;") in cmd
+    # 组杀 + 单杀（TERM 与 KILL）
+    assert "kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null" in cmd
+    assert "kill -9 -- -$pid 2>/dev/null; kill -9 $pid 2>/dev/null" in cmd
+    # 严格结果验证
+    assert "echo STOPFAIL=$pid" in cmd
+    assert "echo STOPPED=$pid" in cmd
+    assert cmd.rstrip().endswith("echo STOPFAIL=$pid; exit 1; else echo STOPPED=$pid; fi")
+    assert "-lt 5" in cmd  # timeout=5 → 等待循环 5 次
+
+
+def test_stop_command_with_logfile_writes_kill_hint():
+    svc = make_svc()
+    cmd = build_kill_stop_command(svc, logfile="'logs/r1/master.log'")
+    assert 'echo "\\$ kill -- -$pid; kill $pid" >> ' + "'logs/r1/master.log'" in cmd
+
+
+def test_stop_command_without_logfile_no_hint():
+    cmd = build_kill_stop_command(make_svc())
+    assert "$ kill" not in cmd
+
+
+def test_stop_command_legacy_hint_contains_manual_steps():
+    svc = make_svc()
+    cmd = build_kill_stop_command(svc)
+    assert "手动执行" in cmd
+    assert "kill -9 $pid" in cmd  # 提示信息中 PID 变量可展开
+
+
+def test_stop_script_command():
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    cmd = build_stop_script_command(svc)
+    assert cmd == "cd /data/mooncake/master && bash stop.sh"
+
+
+def test_stop_script_timeout_exceeds_namespace_cleanup_timeout():
+    """The SSH wrapper must outlive stop.sh's 180s Kubernetes wait."""
+    class FakePool:
+        def __init__(self):
+            self.timeouts = []
+
+        async def run(self, node, command, timeout=None):
+            self.timeouts.append(timeout)
+            return RunResult(0, "ok", "")
+
+    pool = FakePool()
+    node = Node(name="n1", ip="1.1.1.1", username="root", port=22,
+                private_key="~/.ssh/id_rsa", connect_timeout=10)
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    asyncio.run(stop_service(pool, node, svc, run_id="r1"))
+
+    assert pool.timeouts[-1] == STOP_SCRIPT_TIMEOUT
+    assert STOP_SCRIPT_TIMEOUT > 180
+
+
+def test_stop_script_command_with_variables():
+    """手动停止同样注入变量（与启动一致），特殊字符安全引用。"""
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    assert build_stop_script_command(svc) == "cd /data/mooncake/master && bash stop.sh"
+    cmd = build_stop_script_command(svc, {"A": "1", "B": "x y"})
+    assert cmd == "cd /data/mooncake/master && env A=1 B='x y' bash stop.sh"
+
+
+def test_status_command_tick_check():
+    cmd = build_status_command(make_svc())
+    assert "read pid tick < run/mooncake-master.pid" in cmd
+    # 组判定：组长或组内任一存活均视为运行中
+    assert "if ! kill -0 $pid 2>/dev/null && ! kill -0 -- -$pid 2>/dev/null;" in cmd
+    assert "echo LEGACY $pid" in cmd
+    assert "echo REUSED $pid" in cmd
+    assert cmd.count("echo RUNNING $pid") == 2  # 组长存活 + 组残留两种路径
+    assert "echo DEAD $pid rc=-" in cmd  # 无 run_id 时无码
+    assert "exit_code" not in cmd
+
+
+def test_status_command_reads_deploy_status():
+    """探活命令顺带读取 run/deploy.status 心跳（RUNNING 两分支）。"""
+    cmd = build_status_command(make_svc())
+    assert "run/deploy.status" in cmd
+    assert cmd.count('echo "DEPLOY $d"') == 2
+    assert cmd.count('echo "DEPLOY -"') == 2
+
+
+def test_parse_status_deploy_state():
+    assert parse_status("RUNNING 123\nDEPLOY STARTING").deploy_state == "STARTING"
+    assert parse_status("RUNNING 123\nDEPLOY DEGRADED").deploy_state == "DEGRADED"
+    assert parse_status("RUNNING 123\nDEPLOY -").deploy_state == "-"
+    assert parse_status("RUNNING 123").deploy_state is None
+    # 非运行路径不输出 DEPLOY 行
+    assert parse_status("DEAD 1 rc=0 cc=-").deploy_state is None
+
+
+def test_status_command_with_run_id_reads_exit_code():
+    cmd = build_status_command(make_svc(), run_id="20261025-120000")
+    assert "logs/20261025-120000/exit_code" in cmd
+    assert "rc=$(cat" in cmd
+
+
+# -------------------------------------------------------------- 日志命令 ----
+def test_log_read_commands():
+    svc = make_svc()
+    assert build_log_read_command(svc, "r1", "master.log", None) == \
+        "cd /data/mooncake/master && cat -- logs/r1/master.log"
+    assert build_log_read_command(svc, "r1", "master.log", 200) == \
+        "cd /data/mooncake/master && tail -n 200 -- logs/r1/master.log"
+    assert build_log_read_command(svc, "r1", "master.log", 50, follow=True) == \
+        "cd /data/mooncake/master && tail -F -n 50 -- logs/r1/master.log"
+
+
+# ---------------------------------------------------------------- 解析 ----
+def test_parse_pid():
+    assert parse_pid("PID=12345\n") == 12345
+    assert parse_pid("some noise\nPID=999") == 999
+    assert parse_pid("no pid here") is None
+
+
+def test_parse_status():
+    assert parse_status("RUNNING 123").state == "running"
+    assert parse_status("RUNNING 123").pid == 123
+    assert parse_status("RUNNING 123").exit_code is None
+    dead = parse_status("DEAD 123 rc=7")
+    assert dead.state == "dead" and dead.pid == 123 and dead.exit_code == 7
+    dead0 = parse_status("DEAD 123 rc=0")
+    assert dead0.exit_code == 0
+    dead_none = parse_status("DEAD 123 rc=-")
+    assert dead_none.state == "dead" and dead_none.exit_code is None
+    assert parse_status("LEGACY 123").state == "legacy"
+    assert parse_status("REUSED 123").state == "reused"
+    assert parse_status("NOPIDFILE").state == "nopidfile"
+    assert parse_status("NOWS").state == "nows"
+    assert parse_status("").state == "unknown"
+
+
+def test_parse_archives():
+    out = ("20261025-120000-1/master.log\t2048\n"
+           "20261025-120000-1/exit_code\t2\n"          # 应被排除出文件表
+           "20261025-110000/store.log\t512\n"
+           "EXIT\t20261025-120000-1\t7\n"
+           "EXIT\t20261025-110000\t0\n"
+           "badline\n")
+    archives, exit_codes = parse_archives(out)
+    assert list(archives.keys()) == ["20261025-120000-1", "20261025-110000"]
+    assert archives["20261025-120000-1"] == [{"file": "master.log", "size": 2048}]
+    assert archives["20261025-110000"] == [{"file": "store.log", "size": 512}]
+    assert exit_codes == {"20261025-120000-1": 7, "20261025-110000": 0}
+
+
+def test_parse_archives_empty():
+    archives, exit_codes = parse_archives("")
+    assert archives == {} and exit_codes == {}
+
+
+def test_shell_ws():
+    assert shell_ws("/data/x") == "/data/x"  # 安全字符集，quote 后不变
+    assert shell_ws("/data/my dir") == "'/data/my dir'"  # 防御性引用
+    assert shell_ws("~/x") == "~/x"

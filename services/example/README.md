@@ -15,7 +15,7 @@
 | `start.script` | string | 否 | 启动脚本，服务目录内相对路径，默认 `start.sh` |
 | `start.args` | string[] | 否 | 启动脚本的固定参数（静态，所有实例共享）；创建实例时可追加参数，二者合并冻结为实例快照，后续启动/重启沿用 |
 | `start.log` | string | 否 | 日志文件名（如 `master.log`），实际写入 `<workspace>/logs/<run_id>/<该文件名>`，每次启动独立归档、永不覆盖 |
-| `stop.script` | string | 否 | 自定义停止脚本；缺省时按 PID 文件 kill（`stop.timeout` 秒后强杀） |
+| `stop.script` | string | 否 | 自定义停止脚本；缺省时按 PID 文件 kill（`stop.timeout` 秒后强杀）。执行时注入实例的环境变量快照（手动停止/自动清理一致） |
 | `stop.timeout` | number | 否 | 默认 kill 方式的等待秒数，默认 10 |
 | `deploy.files` | string[] | 否 | 需下发到节点的文件（支持 glob）；缺省 = 全部文件（`service.json`、隐藏文件除外）。**注意 README.md 等说明文件不应列入** |
 | `variables` | object | 否 | 默认环境变量（注入 start.sh），启动任务时可覆盖；创建实例时与覆盖值合并冻结为实例快照，后续启动/重启沿用 |

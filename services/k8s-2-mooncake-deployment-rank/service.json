@@ -6,7 +6,7 @@
     "k8s-controller-16nodes"
   ],
   "allow_duplicate_start": false,
-  "workspace": "/home/w00921547/services/k8s-2-mooncake-deployment-rank",
+  "workspace": "/home/w00921547/Services-Deployment/k8s-2-mooncake-deployment-rank",
   "start": {
     "script": "start.sh",
     "args": [],

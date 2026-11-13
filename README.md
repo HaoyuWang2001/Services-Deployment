@@ -55,14 +55,14 @@ cp cluster.example.json cluster.json   # Windows: copy cluster.example.json clus
 ### 3. 启动后端
 
 ```bash
-python -m backend.main --host 127.0.0.1 --port 8310
+python -m webui.backend.main --host 127.0.0.1 --port 8310
 ```
 
 - 打开 `http://127.0.0.1:8310`（WebUI）或 `http://127.0.0.1:8310/docs`（OpenAPI 文档）
 - 需要局域网其他机器（如 Windows PC 的浏览器 / Agent）访问时，改用 `--host 0.0.0.0`
 - `--host` / `--port` 也可经环境变量 `HOST` / `PORT` 指定（命令行参数优先）
 - 已内置优雅关闭超时（5s）：开着日志/监控页面时 Ctrl+C 也能可靠退出
-- 仓库已附带构建好的 WebUI（`backend/static/`）；如需修改前端：`cd web && npm install && npm run build`
+- 仓库已附带构建好的 WebUI（`webui/backend/static/`）；如需修改前端：`cd webui/web && npm install && npm run build`
 
 ## 服务定义：`services/<服务名>/`
 
@@ -104,13 +104,15 @@ python -m backend.main --host 127.0.0.1 --port 8310
 |---|---|---|
 | 未部署 | workspace 缺失 | 启动（重新部署）、删除 |
 | 未启动 | 已创建未运行 | 启动、删除 |
-| 启动中（瞬态） | 部署+启动执行中 | 无（等待） |
+| 启动中（瞬态） | 部署+启动执行中 | 无（等待；超 600s 卡死自动收敛，或手动「解除」） |
 | 运行中 | 进程（组）存活 | 停止、重启（链接停止→启动）、删除（链接停止→删除） |
-| 停止中（瞬态） | 组杀 + stop.sh 清理执行中 | 无（等待） |
+| 停止中（瞬态） | 组杀 + stop.sh 清理执行中 | 无（等待；超 600s 卡死自动收敛，或手动「解除」） |
 | 已停止 | 停止流程完成的干净态 | 启动、删除 |
-| 删除中（瞬态） | 注销执行中 | 无（等待） |
+| 删除中（瞬态） | 注销执行中 | 无（等待；超 600s 卡死自动**补完删除**，或手动「解除」） |
 | 已完成(0) | start.sh 自然退出且退出码 0（自动清理已执行） | 启动、删除、停止（重跑清理） |
 | 异常态(码=N/无码) | 进程自行退出（非零）或被外部杀死；**不自动清理** | **仅停止**（归一后才能启动/删除） |
+| 部署中（心跳派生） | 进程存活且 `run/deploy.status=STARTING` | 同运行中（停止/重启/删除；不可启动） |
+| 异常中（心跳派生） | 进程存活且 `run/deploy.status=DEGRADED`（启动超时或持续异常，脚本仍在监测） | 同运行中（停止/重启/删除；不可启动）；工作负载恢复后自动回到运行中 |
 
 
 | 操作 | 语义 |
@@ -120,13 +122,14 @@ python -m backend.main --host 127.0.0.1 --port 8310
 | 停止 | 走「停止中」：系统先整组终止进程（指纹校验+组杀，无需也不应在 stop.sh 里 kill），成功后执行 stop.sh 应用清理 → 已停止；异常态/已完成停止时 kill 幂等空跑、stop.sh 照常执行 |
 | 重启（仅运行中） | 链接「停止→启动」：完整停止管线 → 同 run_id 续写启动；停止失败中止并如实报错，等待用户排查后重新操作 |
 | 删除 | 未启动/已停止/已完成/未部署：直接注销（节点文件保留）；**运行中：链接「停止→删除」**（走完整停止管线，停止正常完成后才注销；停止失败则删除中止、实例保留可重试）；异常态须先停止归一 |
+| 解除（瞬态卡死） | 实例卡在启动中/停止中/删除中超过 600s（通常是后端中断/崩溃遗留）时，按节点实际状态收敛：进程存活→运行中、已退出→已停止/异常、删除中→补完删除；也可等待 600s 自动收敛 |
 | 清理（服务级） | **仅当节点上不存在实例时允许**（请先删除实例）：整目录删除该服务在各节点部署过的全部 workspace（含历史目录与日志），恢复节点至部署前。每目录三重防护：无 `logs//run/` 系统标记 → `SKIP` 拒删；残留 pid 且进程存活 → `REFUSE`；不存在 → `MISSING` 视为已清理。命令与结果记录于任务详情（即清理日志），支持补录部署历史之外的旧目录 |
 
 ## 清理状态列（与主状态解耦）
 
 实例表新增「清理状态」列，仅描述 **kill + stop.sh 管线**的最近一次执行结果：`— / 执行中 / 正常 / 清理失败(N) / 停止失败 / 未清理`。数据源为节点 `cleanup_code`（最近一次 stop.sh 退出码，自动与手动路径双写）+ `cleanup_codes.log`（历史）+ 手动停止结果。**仅展示，不影响任何操作门禁**——清理失败时可对已完成实例执行「停止」重跑清理。
 
-- **stop.sh 只做应用层清理**（如拆除集群）：手动停止时在进程终止后执行；start.sh **自然退出（含非零退出）后自动执行**完成清理（被停止/杀死的路径不触发自动执行）
+- **stop.sh 只做应用层清理**（如拆除集群）：手动停止时在进程终止后执行；start.sh **自然退出（含非零退出）后自动执行**完成清理（被停止/杀死的路径不触发自动执行）。两条路径执行 stop.sh 时均**注入该实例的环境变量快照**（手动停止用实例快照，旧实例回退 service.json 默认值；自动清理继承启动时注入的环境），行为一致
 - 异常态不自动清理；必须先「停止」进入已停止（期间执行清理），才能启动或删除
 - **部署历史**：系统记录每个 (服务, 节点) 部署过的全部 workspace（`data/deploy_history.json`），更换目录后旧目录仍会被「清理」覆盖——`GET /api/services/<名称>/history` 可查
 - 停止与自动清理的过程全部写入实例日志（`停止实例` / `自动清理 (stop.sh)` 分隔符 + `$ kill` / `$ bash stop.sh` 执行提示行 + 输出）
@@ -146,7 +149,13 @@ python -m backend.main --host 127.0.0.1 --port 8310
 ```
 
 启动机制：`cd <workspace> && nohup env K=V bash start.sh > logs/<run_id>/<log> 2>&1 &`。
-不做成功性判定——只要 nohup 派发成功、拿到 PID 即任务成功；启动失败请直接查看该 run_id 的日志。
+工具不做成功性判定——只要 nohup 派发成功、拿到 PID 即任务成功。
+
+**启动脚本失败语义约定**（适用于自管理的常驻脚本，如 k8s 部署类服务）：
+
+- **阶段 1（本地校验 / apply 失败）**：脚本非零退出 → 实例进入异常态 → 工具自动执行 stop.sh 清场；修复后直接「启动」重试
+- **阶段 2（集群侧就绪/健康）**：脚本**持续监测**，短暂异常（镜像缺失待修复、k8s 自动重启 Pod）被容忍；持续超阈值（`STARTUP_TIMEOUT` / `MONITOR_TOLERANCE`）转「异常中」并输出诊断，**工作负载恢复后自动回到运行中**；只有通过工具「停止」才会退出
+- 脚本可写 `run/deploy.status` 心跳（`STARTING` / `READY` / `DEGRADED|原因`），工具探活会读取并在实例表展示「部署中 / 异常中」；不写该文件的服务行为与旧版一致
 
 ## WebUI 使用
 
@@ -236,9 +245,11 @@ websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h
 ```
 ├── cluster.json          # 集群配置（唯一真源）
 ├── services/             # 服务定义（service.json + 脚本）
-├── backend/              # FastAPI 后端（api / ssh / deployer / executor / tasks / logs）
-├── web/                  # Vue3 + Element Plus 前端源码
-├── tests/                # 单元测试（pytest）
+├── webui/                # WebUI 全部内容
+│   ├── backend/          # FastAPI 后端（api / ssh / deployer / executor / tasks / logs）
+│   │   └── static/       # 构建产物（后端直接托管）
+│   ├── web/              # Vue3 + Element Plus 前端源码
+│   └── tests/            # 单元测试（pytest）
 └── data/                 # 运行时状态（tasks.json / instances.json，自动生成）
 ```
 
@@ -258,10 +269,10 @@ websocat "$BASE/api/monitors/ws/monitor?nodes=node1,node2&interval=2&cmd=df%20-h
   3. 旧的 root 实例按停止失败提示（LEGACY）在节点上手动清理后重新启动
   4. `cluster.json` 修改 `username` 并按需启用 `sudo`，重新加载配置
 - 日志按启动时间归档永久保留在节点上，如需清理请自行删除 `logs/` 下的历史批次目录
-- 开发调试前端：`cd web && npm run dev`（Vite 代理到 `localhost:8310`）
+- 开发调试前端：`cd webui/web && npm run dev`（Vite 代理到 `localhost:8310`）
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -q
+python -m pytest webui/tests -q
 ```

@@ -11,8 +11,8 @@ data/
 cluster.json
 
 # 前端
-web/node_modules/
-web/dist/
+webui/web/node_modules/
+webui/web/dist/
 
 # IDE / OS
 .idea/

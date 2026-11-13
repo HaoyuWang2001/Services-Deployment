@@ -32,7 +32,7 @@ metadata:
   labels:
     app: mooncake-master
 spec:
-  replicas: 1
+  replicas: ${MOONCAKE_MASTER_REPLICAS}
   selector:
     matchLabels:
       app: mooncake-master
@@ -88,11 +88,11 @@ spec:
             requests:
               cpu: "8"
               memory: 16Gi
-              unifiedbus.com/ub_net_device: "1"
+              unifiedbus.com/ub_net_device: 1
             limits:
               cpu: "8"
               memory: 16Gi
-              unifiedbus.com/ub_net_device: "1"
+              unifiedbus.com/ub_net_device: 1
           startupProbe:
             tcpSocket:
               port: 17701

@@ -1,0 +1,18 @@
+{
+  "name": "ssh-0-mooncake-compile",
+  "description": "编译mooncake及whl包，并发布到四节点上，完成whl安装",
+  "nodes": [
+    "node4-compile"
+  ],
+  "workspace": "/home/w00921547/Services-Deployment/mooncake-compile",
+  "start": {
+    "script": "build-mooncake.sh",
+    "args": [],
+    "log": "ssh-0-mooncake-compile.log"
+  },
+  "stop": {
+    "timeout": 10
+  },
+  "variables": {},
+  "allow_duplicate_start": false
+}
