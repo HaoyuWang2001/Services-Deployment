@@ -22,7 +22,6 @@
     "COMMIT_ID": "",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
-    "BUILD_OUTPUT_DIR": "/home/Mooncake/outputs",
     "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
     "TAR_OUTPUT_DIR": "/home/w00921547/downloads/mooncake-runtime-images"
   },
