@@ -104,6 +104,15 @@ html, body, #app {
   .el-button:not(.is-disabled):active { transform: scale(0.97); }
 }
 
+/* ------------------------------------------------ 操作提示（右下、可穿透） ----
+ * 任务结果通知固定右下角，避开页面右上角的批量操作按钮区（design.md UI-001）。
+ * pointer-events: none 让提示框整体不拦截点击；正文与关闭按钮单独恢复，
+ * 保证错误详情仍可滚动、可手动关闭。
+ * -------------------------------------------------------------------------- */
+.sd-toast { pointer-events: none; }
+.sd-toast .el-notification__content,
+.sd-toast .el-notification__closeBtn { pointer-events: auto; }
+
 /* ------------------------------------------------------------ 终端 ---- */
 .sd-term {
   background: var(--sd-term-bg);
