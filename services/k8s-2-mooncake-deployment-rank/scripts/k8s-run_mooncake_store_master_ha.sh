@@ -63,6 +63,8 @@ export MC_LOG_ENABLE=on
 export MC_LOG_DIR="/var/log/mooncake/master"
 mkdir -p "${MC_LOG_DIR}"
 
+export MC_YLT_LOG_PATH="/var/log/mooncake/master/ylt-rpc.log"
+
 export MC_HIFREQ_LOG_SAMPLE_RATE=1
 
 # ============================================================================
