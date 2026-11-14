@@ -29,9 +29,6 @@ PAUSE_TAR="/root/kubernetes/images/pause-3.8-aarch64.tar"
 MEMORY_PRESSURE_TAR="/home/w00921547/downloads/memory-pressure.tar"
 MEMORY_PRESSURE_IMAGE="memory-pressure:latest"
 
-# stream_bandwidth 可执行文件
-STREAM_BANDWIDTH_FILE="/home/w00921547/downloads/stream_bandwidth"
-
 # ================= 函数定义 =================
 
 # 检查远程镜像是否存在，忽略 Registry 和 Namespace 前缀
@@ -47,12 +44,10 @@ check_image() {
 # 分发文件到所有 Kubernetes 节点
 # 参数1：本地文件路径
 # 参数2：远程文件名
-# 参数3：是否设置可执行权限（true/false）
 distribute_file() {
 
     local LOCAL_FILE="$1"
     local REMOTE_FILENAME="$2"
-    local EXECUTABLE="${3:-false}"
 
     local LOCAL_SIZE
     local REMOTE_SIZE
@@ -126,15 +121,6 @@ distribute_file() {
             fi
 
             echo "[$IP] File copied and verified"
-        fi
-
-        # 可执行文件设置权限
-        if [ "$EXECUTABLE" = "true" ]; then
-            ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-                "chmod +x '$REMOTE_FILE'" || {
-                echo "[$IP] ERROR: Failed to set executable permission"
-                return 1
-            }
         fi
 
         echo "[$IP] SUCCESS: $REMOTE_FILENAME is ready"
@@ -384,14 +370,7 @@ echo "========================================"
 # 分发 memory-pressure.tar
 distribute_file \
     "$MEMORY_PRESSURE_TAR" \
-    "memory-pressure.tar" \
-    false || exit 1
-
-# 分发 stream_bandwidth
-distribute_file \
-    "$STREAM_BANDWIDTH_FILE" \
-    "stream_bandwidth" \
-    true || exit 1
+    "memory-pressure.tar" || exit 1
 
 echo
 echo "[LOCAL] All auxiliary files are ready"
