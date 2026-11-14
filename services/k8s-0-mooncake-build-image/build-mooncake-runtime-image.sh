@@ -219,12 +219,12 @@ INFO "全部软链校验通过（容器内可解析）"
 # ============================================================
 # STEP 6. 安装 wheel
 # ============================================================
-STEP "pip3 安装 wheel（运行时注入代理，不固化进镜像）"
+STEP "pip3 安装 wheel"
 
 PIP_EXEC_ENV=()
 if [[ -n "${PROXY_IP}" ]]; then
     PROXY_URL="http://${PROXY_IP}:${PROXY_PORT}"
-    INFO "代理: ${PROXY_URL}（no_proxy=${PIP_NO_PROXY}）"
+    INFO "代理: ${PROXY_URL}"
     PIP_EXEC_ENV=(
         -e "http_proxy=${PROXY_URL}"
         -e "https_proxy=${PROXY_URL}"
@@ -263,7 +263,7 @@ docker exec "${RUNTIME_CONTAINER}" bash "${CHECK_WHEEL}"
 TAG="$(date +%Y%m%d%H%M).${COMMIT_ID}"
 IMAGE_REF="${IMAGE_NAME}:${TAG}"
 
-STEP "提交镜像 ${IMAGE_REF}"
+STEP "提交镜像"
 
 docker commit "${RUNTIME_CONTAINER}" "${IMAGE_REF}" >/dev/null
 docker image inspect "${IMAGE_REF}" >/dev/null
@@ -274,7 +274,7 @@ INFO "镜像已提交: ${IMAGE_REF}"
 # ============================================================
 TAR_PATH="${TAR_OUTPUT_DIR}/${IMAGE_NAME}-${TAG}.tar"
 
-STEP "导出 tar: ${TAR_PATH}"
+STEP "导出 tar 包"
 
 mkdir -p "${TAR_OUTPUT_DIR}"
 docker save -o "${TAR_PATH}" "${IMAGE_REF}"
@@ -282,6 +282,7 @@ docker save -o "${TAR_PATH}" "${IMAGE_REF}"
 [[ -s "${TAR_PATH}" ]] || { ERROR "tar 包为空: ${TAR_PATH}"; exit 1; }
 tar -tf "${TAR_PATH}" | grep -qx 'manifest.json' \
     || { ERROR "tar 包校验失败（缺少 manifest.json）: ${TAR_PATH}"; exit 1; }
+INFO "tar 包已导出: ${TAR_PATH}"
 
 TAR_ABS="$(readlink -f "${TAR_PATH}")"
 TAR_SIZE="$(stat -c %s "${TAR_PATH}")"
@@ -297,9 +298,7 @@ docker rm -f "${RUNTIME_CONTAINER}" >/dev/null 2>&1 || true
 echo
 echo "============================================================"
 echo "SUCCESS: Mooncake runtime 镜像构建完成"
-echo "  commit : ${COMMIT_ID}"
-echo "  image  : ${IMAGE_REF}"
-echo "  tar    : ${TAR_ABS} (${TAR_SIZE} bytes)"
-echo "  镜像内产物: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"
-echo "  分发示例: distribute-image.sh --remote <user>@node4-compile:${TAR_ABS}"
+echo "  commit     : ${COMMIT_ID}"
+echo "  image      : ${IMAGE_REF}"
+echo "  tar        : ${TAR_ABS} (${TAR_SIZE} bytes)"
 echo "============================================================"
