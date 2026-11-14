@@ -21,5 +21,7 @@
       "archives/"
     ]
   },
-  "variables": {}
+  "variables": {
+    "MEMORY_PRESSURE_TAR_PATH": ""
+  }
 }

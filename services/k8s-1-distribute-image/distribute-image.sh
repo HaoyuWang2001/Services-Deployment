@@ -26,7 +26,9 @@ PAUSE_IMAGE_REF="pause-aarch64:3.8"
 PAUSE_TAR="/root/kubernetes/images/pause-3.8-aarch64.tar"
 
 # memory-pressure 镜像
-MEMORY_PRESSURE_TAR="/home/w00921547/downloads/memory-pressure.tar"
+# 该 tar 不再从本地上传：由 MEMORY_PRESSURE_TAR_PATH 指定它在各节点上的落地路径，
+# 直接就地 ctr import 即可。未设置（或为空）时整体跳过传输与加载。
+MEMORY_PRESSURE_TAR_PATH="${MEMORY_PRESSURE_TAR_PATH:-}"
 MEMORY_PRESSURE_IMAGE="memory-pressure:latest"
 
 # ================= 函数定义 =================
@@ -40,96 +42,6 @@ check_image() {
         "ctr -n k8s.io image ls | awk -v expected='$IMAGE' 'NR > 1 {name=\$1; sub(/^.*\\//,\"\",name); if (name == expected) found=1} END {exit !found}'"
 }
 
-# 通用文件分发函数
-# 分发文件到所有 Kubernetes 节点
-# 参数1：本地文件路径
-# 参数2：远程文件名
-distribute_file() {
-
-    local LOCAL_FILE="$1"
-    local REMOTE_FILENAME="$2"
-
-    local LOCAL_SIZE
-    local REMOTE_SIZE
-    local REMOTE_FILE="${REMOTE_IMAGE_DIR}/${REMOTE_FILENAME}"
-
-    if [ ! -f "$LOCAL_FILE" ]; then
-        echo "[LOCAL] ERROR: File not found: $LOCAL_FILE"
-        return 1
-    fi
-
-    LOCAL_SIZE=$(stat -c %s "$LOCAL_FILE") || {
-        echo "[LOCAL] ERROR: Failed to get file size: $LOCAL_FILE"
-        return 1
-    }
-
-    echo
-    echo "Distributing: $REMOTE_FILENAME"
-    echo "Local size: $LOCAL_SIZE bytes"
-
-    for IP in $NODE_IPS; do
-
-        echo "[$IP] Checking remote file..."
-
-        REMOTE_SIZE=$(ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-            "if [ -f '$REMOTE_FILE' ]; then stat -c %s '$REMOTE_FILE'; else echo MISSING; fi") || {
-            echo "[$IP] ERROR: SSH connection failed"
-            return 1
-        }
-
-        if [ "$REMOTE_SIZE" = "$LOCAL_SIZE" ]; then
-            echo "[$IP] File already exists and size matches, skip SCP"
-        else
-
-            if [ "$REMOTE_SIZE" != "MISSING" ]; then
-                echo "[$IP] File size mismatch, removing old file..."
-
-                ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-                    "rm -f '$REMOTE_FILE'" || {
-                    echo "[$IP] ERROR: Failed to remove old file"
-                    return 1
-                }
-            else
-                echo "[$IP] File not found, preparing SCP..."
-            fi
-
-            ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-                "mkdir -p '$REMOTE_IMAGE_DIR'" || {
-                echo "[$IP] ERROR: Failed to create remote directory"
-                return 1
-            }
-
-            echo "[$IP] Copying file..."
-
-            scp "${SCP_OPTS[@]}" "$LOCAL_FILE" \
-                "${SSH_USER}@${IP}:${REMOTE_FILE}" || {
-                echo "[$IP] ERROR: SCP failed"
-                return 1
-            }
-
-            REMOTE_SIZE=$(ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-                "stat -c %s '$REMOTE_FILE'") || {
-                echo "[$IP] ERROR: Failed to verify copied file"
-                return 1
-            }
-
-            if [ "$REMOTE_SIZE" != "$LOCAL_SIZE" ]; then
-                echo "[$IP] ERROR: File size verification failed"
-                echo "[$IP] Local: $LOCAL_SIZE"
-                echo "[$IP] Remote: $REMOTE_SIZE"
-                return 1
-            fi
-
-            echo "[$IP] File copied and verified"
-        fi
-
-        echo "[$IP] SUCCESS: $REMOTE_FILENAME is ready"
-
-    done
-
-    return 0
-}
-
 # ================= 参数检查 =================
 
 # 参数检查及镜像来源处理
@@ -140,7 +52,7 @@ IMAGE_TAR=""
 
 if [ $# -eq 0 ]; then
 
-    echo "Mode: Auxiliary files and pause image only"
+    echo "Mode: pause image only (no image tar, no auxiliary files)"
 
 elif [ $# -eq 1 ] && [ -f "$1" ] && [[ "$1" == *.tar ]]; then
 
@@ -360,21 +272,6 @@ done
 echo "[LOCAL] All image tar files are ready"
 fi
 
-# ================= 阶段 1.5：分发辅助文件 =================
-
-echo
-echo "========================================"
-echo "Stage 1.5: Distribute auxiliary files"
-echo "========================================"
-
-# 分发 memory-pressure.tar
-distribute_file \
-    "$MEMORY_PRESSURE_TAR" \
-    "memory-pressure.tar" || exit 1
-
-echo
-echo "[LOCAL] All auxiliary files are ready"
-
 # ================= 阶段二：导入指定镜像 =================
 
 if [ "$FULL_MODE" = true ]; then
@@ -483,14 +380,18 @@ echo "[LOCAL] Target image is ready on all nodes"
 fi
 
 # ================= 阶段 2.5：导入 memory-pressure 镜像 =================
+#
+# 该 tar 体积过大，不再从本地上传：MEMORY_PRESSURE_TAR_PATH 给出它在各节点上
+# 的现成路径，直接就地导入。该变量没有默认值，未设置即整体跳过（不算失败）。
+
+if [ -n "$MEMORY_PRESSURE_TAR_PATH" ]; then
 
 echo
 echo "========================================"
 echo "Stage 2.5: Import memory-pressure image"
 echo "Image: $MEMORY_PRESSURE_IMAGE"
+echo "Tar (on node): $MEMORY_PRESSURE_TAR_PATH"
 echo "========================================"
-
-MEMORY_PRESSURE_REMOTE="${REMOTE_IMAGE_DIR}/memory-pressure.tar"
 
 ERROR_COUNT=0
 
@@ -506,10 +407,10 @@ for IP in $NODE_IPS; do
 
     else
 
-        echo "[$IP] Image not found, starting import..."
+        echo "[$IP] Image not found, importing from node-local tar..."
 
         ssh -T "${SSH_OPTS[@]}" "${SSH_USER}@${IP}" \
-            "ctr -n k8s.io image import '${MEMORY_PRESSURE_REMOTE}'" || {
+            "test -f '${MEMORY_PRESSURE_TAR_PATH}' || { echo \"ERROR: tar not found on node: ${MEMORY_PRESSURE_TAR_PATH}\" >&2; exit 1; }; ctr -n k8s.io image import '${MEMORY_PRESSURE_TAR_PATH}'" || {
 
             echo "[$IP] ERROR: Image import failed"
             ERROR_COUNT=$((ERROR_COUNT + 1))
@@ -539,6 +440,16 @@ fi
 
 echo
 echo "[LOCAL] memory-pressure image is ready on all nodes"
+
+else
+
+echo
+echo "========================================"
+echo "Stage 2.5: SKIP memory-pressure image"
+echo "MEMORY_PRESSURE_TAR_PATH is not set: neither transferred nor imported"
+echo "========================================"
+
+fi
 
 # ================= 阶段三：检查并导入 pause =================
 
