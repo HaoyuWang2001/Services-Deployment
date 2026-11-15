@@ -17,8 +17,7 @@
   },
   "deploy": {
     "files": [
-      "distribute-image.sh",
-      "archives/"
+      "distribute-image.sh"
     ]
   },
   "variables": {
