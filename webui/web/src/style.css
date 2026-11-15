@@ -127,7 +127,9 @@ html, body, #app {
 }
 .sd-term .line { white-space: pre-wrap; word-break: break-all; content-visibility: auto; contain-intrinsic-size: auto 21px; }
 .sd-term.no-wrap { overflow-x: auto; }
-.sd-term.no-wrap .line { white-space: pre; word-break: normal; }
+/* content-visibility 的尺寸假设只含高度（21px），横向滚动时视口外的行会被
+   跳过渲染导致内容不可见——no-wrap 模式必须关闭该优化 */
+.sd-term.no-wrap .line { white-space: pre; word-break: normal; content-visibility: visible; contain-intrinsic-size: none; }
 .sd-term .line.error { color: var(--sd-term-error); }
 .sd-term .line.notice { color: var(--sd-term-muted); font-style: italic; }
 .sd-term .line.cur-match { background: var(--sd-term-cur-bg); border-radius: 3px; }
