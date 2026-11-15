@@ -240,9 +240,8 @@
           </el-select>
           <div class="field-hint">配置后仅允许在这些节点上启动该服务（如 etcd 仅 node4）</div>
         </el-form-item>
-        <el-form-item label="重复启动">
+        <el-form-item label="允许重复启动">
           <el-switch v-model="form.allowDup" />
-          <div class="field-hint">默认关闭（禁止重复启动）：同节点已有运行中实例时拒绝启动；开启后允许（旧实例进程需自行管理）</div>
         </el-form-item>
         <el-form-item label="默认变量">
           <div class="vars-editor">
