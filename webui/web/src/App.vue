@@ -3,7 +3,7 @@
     <el-aside width="200px" class="aside">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
-        <span>Services-Deployment</span>
+        <span>Services<span class="brand-accent">Deployment</span></span>
       </div>
       <el-menu router :default-active="menuActive" class="menu">
         <el-menu-item index="/cluster">
@@ -79,6 +79,7 @@ const menuActive = computed(() => '/' + (route.path.split('/')[1] || ''))
   background: var(--el-color-primary);
   flex-shrink: 0;
 }
+.brand-accent { color: var(--el-color-primary); }
 .menu { border-right: none; flex: 1; }
 .menu :deep(.el-menu-item) { gap: 0; }
 .aside-footer {
