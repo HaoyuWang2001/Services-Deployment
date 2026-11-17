@@ -4,7 +4,7 @@
     <el-button class="mt-3" @click="$router.push('/services')">返回服务列表</el-button>
   </div>
 
-  <div v-else v-loading="!cfg">
+  <div v-else v-loading="!cfg" class="sd-page">
     <!-- 页头 -->
     <PageHeader :title="name" description="服务配置、实例创建与运行实例管理" back @back="$router.push('/services')">
       <template #badge>
@@ -16,7 +16,7 @@
     </PageHeader>
 
     <!-- 启动实例 -->
-    <el-card shadow="never" class="block">
+    <el-card shadow="never">
       <template #header>
         <div class="sd-card-head">
           <span>启动实例</span>
@@ -71,7 +71,7 @@
     </el-card>
 
     <!-- 运行实例 -->
-    <el-card shadow="never" class="block">
+    <el-card shadow="never">
       <template #header>
         <div class="sd-card-head">
           <div class="inst-title">
@@ -685,7 +685,6 @@ onDeactivated(() => clearInterval(timer))
 
 <style scoped>
 .err-block { max-width: 560px; margin: 40px auto; text-align: center; }
-.block { margin-bottom: var(--sd-space-4); }
 .mt-2 { margin-top: var(--sd-space-2); }
 .mt-3 { margin-top: var(--sd-space-3); }
 .mb-3 { margin-bottom: var(--sd-space-3); }
