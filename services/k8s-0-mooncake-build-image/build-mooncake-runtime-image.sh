@@ -2,13 +2,13 @@
 #
 # Mooncake runtime 镜像构建与导出
 #
-# 前置（手动）：已在编译容器内完成 Mooncake 编译（产物位于
-# ${MOONCAKE_OUTPUTS}/mooncake-${COMMIT_ID}-aarch64-linux）。
+# 前置（手动）：已在编译容器内完成 Mooncake 编译，并知道产物目录在容器内的
+# 【完整路径】，通过 ARTIFACT_DIR 显式传入（必填，禁止留空），例如：
+#   /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux
 #
 # 流程（产物不落宿主机磁盘：编译容器 --docker 管道--> runtime 容器）：
-#   1. 预检（docker / COMMIT_ID 必填 / 编译容器运行中）
-#   2. 在编译容器内校验真实产物目录 mooncake-${COMMIT_ID}-aarch64-linux
-#      存在且含 bin/lib/dist（失败即停，不触碰 runtime 容器）
+#   1. 预检（docker / COMMIT_ID 必填 / ARTIFACT_DIR 必填 / 编译容器运行中）
+#   2. 在编译容器内校验 ARTIFACT_DIR 存在且含 bin/lib/dist（失败即停，不触碰 runtime 容器）
 #   3. 以基础镜像新建 runtime 容器，并建好 bin/lib/dist 三个目录
 #   4. docker cp 流式管道直传：编译容器产物 --(宿主机仅作内存流中转)-->
 #      runtime 容器 /home/Mooncake/outputs，原位置放回
@@ -30,8 +30,11 @@
 #   BASE_IMAGE         (mooncake-runtime-w00921547-base:latest)
 #   IMAGE_NAME         (mooncake-runtime-w00921547)
 #   COMMIT_ID          【必填】镜像 TAG 中的 commitId
-#   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    编译容器内产物根（docker cp 源），
-#                                                  也是 runtime 容器内的产物落地位置
+#   ARTIFACT_DIR       【必填】编译容器内产物目录的完整路径（docker cp 源），
+#                              如 /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux
+#                              留空 → 预检直接报错退出
+#   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    runtime 容器内的产物落地根目录
+#                              （<MOONCAKE_OUTPUTS>/<ARTIFACT_DIR 的末级目录名>/bin|lib|dist）
 #   TAR_OUTPUT_DIR     【必填】tar 包导出目录（无默认值，未填则预检报错退出）
 #   PROXY_IP           (空 = 不使用代理)             pip 安装时的代理地址（常变，运行期传入）
 #   PROXY_PORT         (3128)
@@ -46,6 +49,7 @@ COMPILE_CONTAINER="${COMPILE_CONTAINER:-mooncake-compile}"
 RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
 BASE_IMAGE="${BASE_IMAGE:-mooncake-runtime-w00921547-base:latest}"
 IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-}"        # 必填；STEP 1 校验非空
 MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
 TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-}"   # 必填；STEP 1 校验非空
 CHECK_LDD="/home/check-mooncake-ldd.sh"
@@ -74,7 +78,7 @@ on_error() {
     ERROR "现场已保留：runtime 容器 ${RUNTIME_CONTAINER}（产物仅在容器内，宿主机不留副本）"
     ERROR "排查：docker logs ${RUNTIME_CONTAINER} 2>&1 | tail -100"
     ERROR "     docker inspect ${RUNTIME_CONTAINER}"
-    ERROR "取回产物：docker cp ${RUNTIME_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME:-mooncake-<commit>-aarch64-linux} ./"
+    ERROR "取回产物：docker cp ${RUNTIME_CONTAINER}:${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME:-<产物目录名>} ./"
     exit "$rc"
 }
 trap on_error ERR
@@ -82,7 +86,7 @@ trap on_error ERR
 # ============================================================
 # STEP 1. 预检
 # ============================================================
-STEP "预检环境（docker / COMMIT_ID / 编译容器）"
+STEP "预检环境（docker / COMMIT_ID / ARTIFACT_DIR / 编译容器）"
 
 command -v docker >/dev/null 2>&1 || { ERROR "未找到 docker"; exit 1; }
 
@@ -98,14 +102,28 @@ COMMIT_ID="${COMMIT_ID:-}"
     exit 1
 }
 
-REAL_DIR_NAME="mooncake-${COMMIT_ID}-aarch64-linux"
+# ARTIFACT_DIR 必填：编译容器内产物目录的完整路径，禁止留空（不做任何猜测/推导）
+[[ -n "${ARTIFACT_DIR}" ]] || {
+    ERROR "ARTIFACT_DIR 必须传入（编译容器内产物目录的完整路径，如 /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux）"
+    exit 1
+}
+[[ "${ARTIFACT_DIR}" == /* ]] || {
+    ERROR "ARTIFACT_DIR 必须是容器内的绝对路径（当前：${ARTIFACT_DIR}）"
+    exit 1
+}
+# 产物目录末级名，用于在 runtime 容器内落地成同名目录
+ARTIFACT_NAME="$(basename "${ARTIFACT_DIR}")"
+# 源：编译容器内的产物目录（ARTIFACT_DIR 原样）
+ARTIFACT_SRC_PATH="${ARTIFACT_DIR}"
+# 目标：runtime 容器内的落地目录（<MOONCAKE_OUTPUTS>/<ARTIFACT_NAME>）
+ARTIFACT_DEST_PATH="${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME}"
 
 [[ "$(docker inspect -f '{{.State.Running}}' "${COMPILE_CONTAINER}" 2>/dev/null || echo missing)" == "true" ]] \
     || { ERROR "编译容器未运行: ${COMPILE_CONTAINER}（请先手动完成编译）"; exit 1; }
 
 INFO "编译容器 : ${COMPILE_CONTAINER}"
 INFO "commit id : ${COMMIT_ID}"
-INFO "产物源   : ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}（编译容器内）"
+INFO "产物源   : ${COMPILE_CONTAINER}:${ARTIFACT_DIR}（编译容器内）"
 INFO "产物传输 : 编译容器 → runtime 容器（docker 管道，不落宿主机）"
 INFO "基础镜像 : ${BASE_IMAGE}"
 INFO "镜像名   : ${IMAGE_NAME}"
@@ -114,22 +132,22 @@ INFO "tar 目录 : ${TAR_OUTPUT_DIR}"
 # ============================================================
 # STEP 2. 在编译容器内校验产物（不触碰 runtime 容器）
 # ============================================================
-STEP "校验编译容器内产物: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"
+STEP "校验编译容器内产物: ${ARTIFACT_SRC_PATH}"
 
-docker exec "${COMPILE_CONTAINER}" test -d "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}" \
-    || { ERROR "产物目录缺失: ${COMPILE_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"; exit 1; }
-[[ -n "$(docker exec "${COMPILE_CONTAINER}" ls -A "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}")" ]] \
-    || { ERROR "产物目录为空: ${COMPILE_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"; exit 1; }
+docker exec "${COMPILE_CONTAINER}" test -d "${ARTIFACT_SRC_PATH}" \
+    || { ERROR "产物目录缺失: ${COMPILE_CONTAINER}:${ARTIFACT_SRC_PATH}"; exit 1; }
+[[ -n "$(docker exec "${COMPILE_CONTAINER}" ls -A "${ARTIFACT_SRC_PATH}")" ]] \
+    || { ERROR "产物目录为空: ${COMPILE_CONTAINER}:${ARTIFACT_SRC_PATH}"; exit 1; }
 
 for sub in bin lib dist; do
-    docker exec "${COMPILE_CONTAINER}" test -d "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}" \
-        || { ERROR "产物缺少子目录: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}"; exit 1; }
+    docker exec "${COMPILE_CONTAINER}" test -d "${ARTIFACT_SRC_PATH}/${sub}" \
+        || { ERROR "产物缺少子目录: ${ARTIFACT_SRC_PATH}/${sub}"; exit 1; }
     if [[ -n "$(docker exec "${COMPILE_CONTAINER}" \
-            find "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}" -mindepth 1 -type d -print -quit)" ]]; then
+            find "${ARTIFACT_SRC_PATH}/${sub}" -mindepth 1 -type d -print -quit)" ]]; then
         WARN "产物子目录 ${sub} 内含嵌套目录，软链重建仅处理单层文件"
     fi
     INFO "产物校验通过: ${sub}（$(docker exec "${COMPILE_CONTAINER}" \
-        ls "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}" | wc -l) 项）"
+        ls "${ARTIFACT_SRC_PATH}/${sub}" | wc -l) 项）"
 done
 
 # ============================================================
@@ -162,21 +180,21 @@ STEP "直传产物: ${COMPILE_CONTAINER} → ${RUNTIME_CONTAINER}（管道，不
 # 前置已确认 runtime 容器刚创建、容器内无历史产物，无需清理旧目录。
 # 双端均为容器引用、宿主机侧参数为 "-"：产物只经内存流中转，不写宿主机磁盘。
 # pipefail（顶部 set -Eeuo pipefail）保证任一端失败都会立即进入 on_error。
-docker cp "${COMPILE_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}" - \
+docker cp "${COMPILE_CONTAINER}:${ARTIFACT_SRC_PATH}" - \
     | docker cp - "${RUNTIME_CONTAINER}:${MOONCAKE_OUTPUTS}/"
 
-docker exec "${RUNTIME_CONTAINER}" test -d "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}" \
-    || { ERROR "容器内产物缺失: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"; exit 1; }
-[[ -n "$(docker exec "${RUNTIME_CONTAINER}" ls -A "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}")" ]] \
-    || { ERROR "容器内产物目录为空: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"; exit 1; }
+docker exec "${RUNTIME_CONTAINER}" test -d "${ARTIFACT_DEST_PATH}" \
+    || { ERROR "容器内产物缺失: ${ARTIFACT_DEST_PATH}"; exit 1; }
+[[ -n "$(docker exec "${RUNTIME_CONTAINER}" ls -A "${ARTIFACT_DEST_PATH}")" ]] \
+    || { ERROR "容器内产物目录为空: ${ARTIFACT_DEST_PATH}"; exit 1; }
 
 for sub in bin lib dist; do
-    docker exec "${RUNTIME_CONTAINER}" test -d "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}" \
-        || { ERROR "容器内产物缺少子目录: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}"; exit 1; }
+    docker exec "${RUNTIME_CONTAINER}" test -d "${ARTIFACT_DEST_PATH}/${sub}" \
+        || { ERROR "容器内产物缺少子目录: ${ARTIFACT_DEST_PATH}/${sub}"; exit 1; }
     INFO "已接收: ${sub}（$(docker exec "${RUNTIME_CONTAINER}" \
-        ls "${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}/${sub}" | wc -l) 项）"
+        ls "${ARTIFACT_DEST_PATH}/${sub}" | wc -l) 项）"
 done
-INFO "产物已按原位置放回: ${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"
+INFO "产物已落地: ${ARTIFACT_DEST_PATH}"
 
 # ============================================================
 # STEP 5. 容器内重建软链并校验
@@ -187,10 +205,10 @@ STEP "在 runtime 容器内重建 bin/lib/dist 软链（绝对路径）"
 # 全部在容器内枚举与创建，不依赖宿主机上的任何副本。
 LINK_COUNT="$(docker exec \
     -e "MOONCAKE_OUTPUTS=${MOONCAKE_OUTPUTS}" \
-    -e "REAL_DIR_NAME=${REAL_DIR_NAME}" \
+    -e "ARTIFACT_NAME=${ARTIFACT_NAME}" \
     "${RUNTIME_CONTAINER}" bash -c '
 set -euo pipefail
-src="${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME}"
+src="${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME}"
 n=0
 for sub in bin lib dist; do
     for f in "${src}/${sub}"/*; do
