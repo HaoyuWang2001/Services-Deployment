@@ -16,7 +16,7 @@
     </PageHeader>
 
     <!-- 启动实例 -->
-    <el-card shadow="never">
+    <el-card shadow="never" class="sd-svc-card">
       <template #header>
         <div class="sd-card-head">
           <span>启动实例</span>
@@ -71,7 +71,7 @@
     </el-card>
 
     <!-- 运行实例 -->
-    <el-card shadow="never">
+    <el-card shadow="never" class="sd-svc-card sd-svc-card--inst">
       <template #header>
         <div class="sd-card-head">
           <div class="inst-title">
@@ -102,6 +102,7 @@
         </div>
       </template>
       <el-table ref="instTable" :data="instances" v-loading="instLoading" size="small" row-key="node"
+                max-height="360" class="inst-table"
                 @selection-change="(rows) => (selectedInsts = rows)">
         <template #empty><el-empty description="暂无实例，可在上方创建" :image-size="60" /></template>
         <el-table-column type="selection" reserve-selection width="45" />
@@ -722,5 +723,12 @@ onDeactivated(() => clearInterval(timer))
 .var-inputs { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
+
+/* 两张卡片都保持自身高度，不因实例增减被 flex 压缩（.sd-page 是 height:100% 的纵向 flex）。
+ * 实例数变化时只让「运行实例」表格内部滚动（max-height 见模板），不改变卡片外框高度。 */
+.sd-svc-card { flex: 0 0 auto; }
+.sd-svc-card--inst { display: flex; flex-direction: column; min-height: 0; }
+.sd-svc-card--inst :deep(.el-card__body) { flex: 1 1 auto; min-height: 0; }
+.inst-table { width: 100%; }
 .auto-switch { margin-left: var(--sd-space-3); }
 </style>
