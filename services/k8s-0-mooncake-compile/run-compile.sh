@@ -22,7 +22,10 @@
 # 说明：
 #   - 编译脚本随服务一起部署到服务目录（与 run-compile.sh 同目录，即 SCRIPT_DIR），
 #     不再依赖外部 scp 目录；用 BUILD_SCRIPT 变量选择要注入并执行哪一个。
-#   - 容器内源码仓库已 clone 好（REPO_DIR 可配），本服务只做 fetch / checkout / reset。
+# 容器内仓库已 clone 好（REPO_DIR 可配），本服务只做 fetch / checkout / reset。
+#   - 容器通常以 root 运行而仓库属主可能不是 root，git 会报 "dubious ownership" 并拒绝操作；
+#     这里通过 GIT_CONFIG_* 环境变量（等价于 git config --global safe.directory='*'）消除该限制，
+#     不改镜像、不落盘任何 git 配置。
 #   - 代理（可选）：PROXY_IP 为空表示不使用代理。此时 git 拉取与编译脚本均直连，
 #     依赖容器自身网络/代理配置；仅当 PROXY_IP 非空时才注入 git config 与 build.env 代理变量。
 #   - ARTIFACT_SRC 不暴露为变量：产物目录在 checkout 之后按实际短 commit 推导。
@@ -40,7 +43,7 @@ FULL_IMAGE="${COMPILE_IMAGE}:${COMPILE_IMAGE_TAG}"
 # 本服务自行拉起/销毁的运行时容器名
 CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile-w00921547}"
 
-REPO_DIR="${REPO_DIR:-/workspace/Mooncake}"
+REPO_DIR="${REPO_DIR:-/home/haoyu/Mooncake}"
 GIT_BRANCH="${GIT_BRANCH:-}"          # 空 → 使用容器内当前分支
 COMMIT_ID="${COMMIT_ID:-}"            # 空 → 使用分支最新提交（origin/<branch> tip）
 
@@ -66,6 +69,11 @@ VENV="${VENV:-}"
 # 产物源目录——运行时推导（checkout 之后按实际短 commit 计算），此处仅声明
 ARTIFACT_SRC=""
 ACTUAL_COMMIT=""
+
+# 容器内 git 统一附加的配置：safe.directory=*（规避 root 与仓库属主不一致时的 dubious ownership）
+GIT_SAFE_FLAGS=( -e "GIT_CONFIG_COUNT=1"
+                 -e "GIT_CONFIG_KEY_0=safe.directory"
+                 -e "GIT_CONFIG_VALUE_0=*" )
 
 # ===================== 日志辅助 =====================
 
@@ -160,11 +168,12 @@ INFO "容器就绪: ${CONTAINER_NAME}"
 STEP "校验容器内仓库并解析 分支 / commit（拉取代码前）"
 
 # 容器内 REPO_DIR 必须是 git 工作区
-docker exec "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || { ERROR "容器内未找到 git 仓库: ${REPO_DIR}（基础镜像应已 clone）"; exit 1; }
 INFO "容器内仓库就绪: ${REPO_DIR}"
 
 RESOLVED="$(docker exec \
+    "${GIT_SAFE_FLAGS[@]}" \
     -e "REPO_DIR=${REPO_DIR}" \
     -e "GIT_BRANCH=${GIT_BRANCH}" \
     -e "COMMIT_ID=${COMMIT_ID}" \
@@ -200,6 +209,7 @@ echo
 STEP "容器内拉取代码: ${EFF_BRANCH}${EFF_COMMIT:+ @ ${EFF_COMMIT}}"
 
 docker exec \
+    "${GIT_SAFE_FLAGS[@]}" \
     "${PULL_PROXY_FLAGS[@]}" \
     -e "REPO_DIR=${REPO_DIR}" \
     -e "EFF_BRANCH=${EFF_BRANCH}" \
@@ -243,7 +253,7 @@ echo ">> 已切到 HEAD: $(git rev-parse HEAD)  ($(git log -1 --format=%s))"
 INFO "代码拉取完成"
 
 # 推导产物源目录：REPO_DIR/outputs/mooncake-<实际短commit>-aarch64-linux
-ACTUAL_COMMIT="$(docker exec "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --short HEAD)"
+ACTUAL_COMMIT="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --short HEAD)"
 ARTIFACT_SRC="${REPO_DIR}/outputs/mooncake-${ACTUAL_COMMIT}-aarch64-linux"
 INFO "产物源目录(推导): ${ARTIFACT_SRC}  (commit=${ACTUAL_COMMIT})"
 
