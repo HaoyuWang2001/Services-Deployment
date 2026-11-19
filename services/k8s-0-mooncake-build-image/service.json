@@ -23,7 +23,7 @@
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
     "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
-    "TAR_OUTPUT_DIR": "/home/w00921547/downloads/mooncake-runtime-images"
+    "TAR_OUTPUT_DIR": ""
   },
   "allow_duplicate_start": false
 }

@@ -37,7 +37,7 @@
 #   IMAGE_NAME         (mooncake-runtime-w00921547)
 #   COMMIT_ID          【必填】镜像 TAG 与产物目录名中的 commitId
 #   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    容器内产物根（runtime 容器落地位置）
-#   TAR_OUTPUT_DIR     (/home/w00921547/downloads/mooncake-runtime-images)
+#   TAR_OUTPUT_DIR     【必填】tar 包导出目录（无默认值，未填则预检报错退出）
 #   PROXY_IP           (空 = 不使用代理)             pip 安装时的代理地址（常变，运行期传入）
 #   PROXY_PORT         (3128)
 #   PIP_NO_PROXY       (192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
@@ -53,7 +53,7 @@ RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
 BASE_IMAGE="${BASE_IMAGE:-mooncake-runtime-w00921547-base:latest}"
 IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
 MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
-TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-/home/w00921547/downloads/mooncake-runtime-images}"
+TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-}"   # 必填；STEP 1 校验非空
 CHECK_LDD="/home/check-mooncake-ldd.sh"
 CHECK_WHEEL="/home/check-mooncake-wheel.sh"
 
@@ -104,6 +104,12 @@ command -v docker >/dev/null 2>&1 || { ERROR "未找到 docker"; exit 1; }
 COMMIT_ID="${COMMIT_ID:-}"
 [[ -n "${COMMIT_ID}" ]] || {
     ERROR "COMMIT_ID 必须传入（创建实例时在「变量覆盖」中填写）"
+    exit 1
+}
+
+# TAR_OUTPUT_DIR 必填：无默认值，空 → 直接失败，避免 tar 落到当前工作目录
+[[ -n "${TAR_OUTPUT_DIR}" ]] || {
+    ERROR "TAR_OUTPUT_DIR 必须传入（tar 包导出目录，创建实例时在「变量覆盖」中填写）"
     exit 1
 }
 
