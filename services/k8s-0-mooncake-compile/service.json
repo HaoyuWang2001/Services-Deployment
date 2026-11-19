@@ -1,0 +1,39 @@
+{
+  "name": "k8s-0-mooncake-compile",
+  "description": "自起编译容器（COMPILE_IMAGE:COMPILE_IMAGE_TAG）完成 Mooncake 编译：容器内拉取指定分支/commit 代码（可按需注入代理）、注入并执行编译脚本（脚本由用户从本机 scp 到 SCRIPT_HOST_DIR，不在本仓库创建）、将编译产物 docker cp 到容器外指定目录（ARTIFACT_DST），最后完全关闭并删除编译容器。独立流程，不走 push-lab.sh。",
+  "nodes": [
+    "node4-compile"
+  ],
+  "workspace": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile",
+  "start": {
+    "script": "run-compile.sh",
+    "args": [],
+    "log": "k8s-0-mooncake-compile.log"
+  },
+  "stop": {
+    "script": "stop-compile.sh",
+    "timeout": 10
+  },
+  "deploy": {
+    "files": [
+      "run-compile.sh",
+      "stop-compile.sh"
+    ]
+  },
+  "variables": {
+    "COMPILE_IMAGE": "mooncake-compile-w00921547-base",
+    "COMPILE_IMAGE_TAG": "latest",
+    "CONTAINER_NAME": "mooncake-compile-w00921547",
+    "REPO_DIR": "/workspace/Mooncake",
+    "GIT_BRANCH": "",
+    "COMMIT_ID": "",
+    "BUILD_SCRIPT": "build-mooncake.sh",
+    "SCRIPT_HOST_DIR": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile/build-scripts",
+    "SCRIPT_DEST_DIR": "/workspace",
+    "PROXY_IP": "",
+    "PROXY_PORT": "",
+    "ARTIFACT_SRC": "",
+    "ARTIFACT_DST": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile/artifacts"
+  },
+  "allow_duplicate_start": false
+}
