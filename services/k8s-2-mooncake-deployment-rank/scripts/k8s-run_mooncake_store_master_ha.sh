@@ -109,7 +109,7 @@ exec "${MOONCAKE_MASTER}" \
   --ha_backend_type=etcd \
   --etcd_endpoints="${ETCD_ENDPOINT}" \
   --enable_ha=true \
-  --enable_oplog=true \
+  --enable_oplog=false \
   --rpc_address="${POD_IP}" \
   --enable_metrics_report_to_backend=true \
   --enable_offload=false \
