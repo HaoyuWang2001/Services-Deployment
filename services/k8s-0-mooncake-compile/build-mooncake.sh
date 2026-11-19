@@ -5,10 +5,13 @@ set -euo pipefail
 
 export CLEAN_BUILD=${CLEAN_BUILD:-true} # 应当显示指定
 
-export PROXY_IP=${PROXY_IP} # 必填
-export PROXY_PORT=${PROXY_PORT:-3128}
-export http_proxy="http://${PROXY_IP}:${PROXY_PORT}"
-export https_proxy=${http_proxy}
+# 代理（可选）：PROXY_IP 为空 → 不覆盖代理，沿用容器自身网络/代理配置
+PROXY_IP="${PROXY_IP:-}"
+PROXY_PORT="${PROXY_PORT:-3128}"
+if [[ -n "${PROXY_IP}" ]]; then
+    export http_proxy="http://${PROXY_IP}:${PROXY_PORT}"
+    export https_proxy="${http_proxy}"
+fi
 export no_proxy=192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,127.0.0.1,localhost,local,.local
 
 SRC_ROOT=${SRC_ROOT:-"/workspace/Mooncake"}
