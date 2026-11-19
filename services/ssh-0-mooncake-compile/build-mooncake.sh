@@ -67,10 +67,19 @@ URMA_ROOT="/home/w00921547/gdr/umdk/src/urma/lib/urma/core/include"
 UMDK_ROOT="/home/w00921547/gdr/umdk/src/urma/lib/urma/bond/include"
 URMA_LIBRARY="/home/w00921547/gdr/umdk/build/urma/lib/urma/core/liburma.so"
 
-export CXXFLAGS="${CXXFLAGS:-} -w"
-export CFLAGS="${CFLAGS:-} -w"
+# 生成器从 Make 换成 Ninja：旧 build 目录的 CMakeCache 会让 CMake 报生成器不匹配，
+# 首次切换时自动清理一次（只删构建产物，不动源码与 outputs/）。
+if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]] && ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' "${BUILD_DIR}/CMakeCache.txt"; then
+    echo "[INFO] Generator changed to Ninja, cleaning build dir: ${BUILD_DIR}"
+    rm -rf "${BUILD_DIR}"
+fi
 
-cmake -B "${BUILD_DIR}" -S . \
+# -pipe 省临时文件 I/O（384 核并发时收益明显）；若编译机与运行节点 CPU 同代，
+# 可再加 -mcpu=native 换运行性能（不同代会 SIGILL，先 lscpu 比对再用）。
+export CXXFLAGS="${CXXFLAGS:-} -w -pipe"
+export CFLAGS="${CFLAGS:-} -w -pipe"
+
+cmake -B "${BUILD_DIR}" -S . -G Ninja \
   -DUSE_UB=ON \
   -DUSE_CUDA=ON \
   -DUSE_URING=ON \
@@ -86,9 +95,12 @@ cmake -B "${BUILD_DIR}" -S . \
   -DBUILD_UNIT_TESTS=OFF \
   -DBUILD_EXAMPLES=ON \
   -DBUILD_SHARED_LIBS=OFF \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DENABLE_DEBUG_SYMBOLS=OFF \
   -DCMAKE_SKIP_RPATH=ON \
   -DCMAKE_DISABLE_FIND_PACKAGE_AWSSDK=ON \
+  -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
   -DMOONCAKE_ENABLE_SPDIAG=ON \
   -DSpDiag_DIR="${SPDIAG_DIR}" \
   -DMOONCAKE_SPDIAG_SYSTEM_CLI="${SPDIAG_CLI}" \
@@ -96,6 +108,26 @@ cmake -B "${BUILD_DIR}" -S . \
   -DUMDK_ROOT="${UMDK_ROOT}" \
   -DURMA_LIBRARY="${URMA_LIBRARY}" \
   -DYLT_ENABLE_URMA=ON
+
+# ===== 编译参数说明（只影响“怎么编”，不改功能与硬件选项）=====
+# -G Ninja                    多核下比 make 调度开销小，编译/链接分开排队；
+#                             首次从 Make 切过来时，上面的判断会自动清一次 build 目录。
+# -DCMAKE_BUILD_TYPE=Release  优化级别 -O3（RelWithDebInfo 是 -O2 -g）；实测 -O3 比 -O2 快 3-5%。
+# -DENABLE_DEBUG_SYMBOLS=OFF  工程在 common.cmake 里向全局 CXXFLAGS 追加 -g，必须关掉它才能彻底
+#                             去符号；-g 对运行零收益，只让单个重 TU 编译慢约 1.5 倍、峰值内存
+#                             多 20-40%、.o 大二十多倍。需要 gdb 时另建一份带 -g 的构建。
+# -pipe                       编译走管道、少落临时文件，384 核并发时省 I/O（见上方 CXXFLAGS）。
+# -DCMAKE_C_COMPILER_LAUNCHER=ccache
+# -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+#                             增量编译走 ccache，无改动时近乎瞬时；改 flags 会全量失效一次。
+# -DBUILD_UNIT_TESTS=OFF      不编单测（约 20 个 TU）；EXAMPLES/BENCHMARK 保留是因为产物里要
+#                             带 transfer_engine_bench 与 stress_cluster_bench。
+# -DBUILD_SHARED_LIBS=OFF     多数库静态编入，产物按 outputs/{bin,lib} 分发。
+# -DCMAKE_SKIP_RPATH=ON       产物不写 RPATH，运行期依赖由节点 LD_LIBRARY_PATH 提供。
+# -DCMAKE_DISABLE_FIND_PACKAGE_AWSSDK=ON
+#                             不引入 S3 依赖，少编若干 TU 和链接项。
+# 可选（默认没开）：-mcpu=native 需编译机与运行节点 CPU 同代，否则节点 SIGILL；
+#                   -fuse-ld=lld 可再压链接时间；-flto 提运行性能但显著拉长编译关键路径。
 
 echo ">> Build targets"
 export GOPROXY="http://mirrors.aliyun.com/goproxy,direct"
