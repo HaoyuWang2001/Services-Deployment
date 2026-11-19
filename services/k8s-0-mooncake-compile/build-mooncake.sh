@@ -22,7 +22,6 @@ export PATH="/usr/local/go/bin:${PATH}"
 VENV=""
 VENV_PIP="$( [[ -n "${VENV:-}" ]] && printf '%s' "${VENV}/bin/pip" || printf 'pip' )"
 
-NODES=()
 BIN_TARGETS=(
     "mooncake_master"
     "mooncake_client"
