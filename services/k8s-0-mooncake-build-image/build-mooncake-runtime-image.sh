@@ -25,23 +25,20 @@
 #   - 任一步失败 → 非零退出 → 实例显示异常(码)；stop 无脚本，无副作用
 #   - 成功：删除 runtime 容器；失败：保留 runtime 容器便于排查
 #
-# 环境变量（全部可在 service.json / 实例变量覆盖）：
-#   COMMIT_ID          【必填】镜像 TAG 与产物目录名中的 commitId
+# 环境变量（可被实例变量覆盖）：
 #   ARTIFACT_SOURCE    (container) 产物来源：container | host
 #   COMPILE_CONTAINER  (mooncake-compile-w00921547)  container 源：编译容器名
 #   ARTIFACT_HOST_DIR  (/home/haoyu/k8s-ws/k8s-0-mooncake-compile/artifacts)  host 源：宿主机产物目录
-#   RUNTIME_CONTAINER  (mooncake-runtime-w00921547)  本次临时 runtime 容器名
+#   RUNTIME_CONTAINER  (mooncake-runtime-w00921547)
 #   BASE_IMAGE         (mooncake-runtime-w00921547-base:latest)
 #   IMAGE_NAME         (mooncake-runtime-w00921547)
+#   COMMIT_ID          【必填】镜像 TAG 与产物目录名中的 commitId
 #   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    容器内产物根（runtime 容器落地位置）
-#   ARCH               (aarch64-linux)              产物目录名后缀 mooncake-<commit>-<ARCH>
 #   TAR_OUTPUT_DIR     (/home/w00921547/downloads/mooncake-runtime-images)
-#   PROXY_IP           (空 = 不使用代理)             pip 安装时代理地址（常变，运行期传入）
+#   PROXY_IP           (空 = 不使用代理)             pip 安装时的代理地址（常变，运行期传入）
 #   PROXY_PORT         (3128)
 #   PIP_NO_PROXY       (192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
 #                       127.0.0.1,localhost,local,.local)
-#   CHECK_LDD          (/home/check-mooncake-ldd.sh)   runtime 容器内 ldd 校验脚本
-#   CHECK_WHEEL        (/home/check-mooncake-wheel.sh) runtime 容器内 wheel 校验脚本
 #
 set -Eeuo pipefail
 
@@ -54,10 +51,9 @@ RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
 BASE_IMAGE="${BASE_IMAGE:-mooncake-runtime-w00921547-base:latest}"
 IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
 MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
-ARCH="${ARCH:-aarch64-linux}"
 TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-/home/w00921547/downloads/mooncake-runtime-images}"
-CHECK_LDD="${CHECK_LDD:-/home/check-mooncake-ldd.sh}"
-CHECK_WHEEL="${CHECK_WHEEL:-/home/check-mooncake-wheel.sh}"
+CHECK_LDD="/home/check-mooncake-ldd.sh"
+CHECK_WHEEL="/home/check-mooncake-wheel.sh"
 
 # pip 安装代理（PROXY_IP 常变，运行期传入，不固化进基础镜像）
 PROXY_IP="${PROXY_IP:-}"
@@ -88,7 +84,7 @@ on_error() {
     if [[ "${ARTIFACT_SOURCE}" == "host" ]]; then
         ERROR "产物源（宿主机，原样保留）：${HOST_SRC_DIR:-${ARTIFACT_HOST_DIR}}"
     else
-        ERROR "取回产物：docker cp ${RUNTIME_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME:-mooncake-<commit>-${ARCH}} ./"
+        ERROR "取回产物：docker cp ${RUNTIME_CONTAINER}:${MOONCAKE_OUTPUTS}/${REAL_DIR_NAME:-mooncake-<commit>-aarch64-linux} ./"
     fi
     exit "$rc"
 }
@@ -112,7 +108,7 @@ case "${ARTIFACT_SOURCE}" in
     *) ERROR "ARTIFACT_SOURCE 只能是 container 或 host（当前：${ARTIFACT_SOURCE}）"; exit 1 ;;
 esac
 
-REAL_DIR_NAME="mooncake-${COMMIT_ID}-${ARCH}"
+REAL_DIR_NAME="mooncake-${COMMIT_ID}-aarch64-linux"
 
 if [[ "${ARTIFACT_SOURCE}" == "container" ]]; then
     [[ "$(docker inspect -f '{{.State.Running}}' "${COMPILE_CONTAINER}" 2>/dev/null || echo missing)" == "true" ]] \

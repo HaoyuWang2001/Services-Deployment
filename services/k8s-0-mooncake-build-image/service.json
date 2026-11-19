@@ -19,19 +19,11 @@
   "variables": {
     "COMMIT_ID": "",
     "ARTIFACT_SOURCE": "container",
-    "COMPILE_CONTAINER": "mooncake-compile-w00921547",
     "ARTIFACT_HOST_DIR": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile/artifacts",
-    "RUNTIME_CONTAINER": "mooncake-runtime-w00921547",
-    "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
-    "IMAGE_NAME": "mooncake-runtime-w00921547",
-    "MOONCAKE_OUTPUTS": "/home/Mooncake/outputs",
-    "ARCH": "aarch64-linux",
-    "TAR_OUTPUT_DIR": "/home/w00921547/downloads/mooncake-runtime-images",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
-    "PIP_NO_PROXY": "192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,127.0.0.1,localhost,local,.local",
-    "CHECK_LDD": "/home/check-mooncake-ldd.sh",
-    "CHECK_WHEEL": "/home/check-mooncake-wheel.sh"
+    "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
+    "TAR_OUTPUT_DIR": "/home/w00921547/downloads/mooncake-runtime-images"
   },
   "allow_duplicate_start": false
 }
