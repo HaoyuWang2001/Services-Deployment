@@ -1,7 +1,7 @@
 {
   "name": "ssh-3-mooncake-store",
   "description": "Mooncake Store",
-  "workspace": "/home/w00921547/Services-Deployment/mooncake-store",
+  "workspace": "",
   "start": {
     "script": "run_mooncake_store_realclient_ha.sh",
     "args": [],

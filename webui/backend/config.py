@@ -171,7 +171,7 @@ class DeploySpec(BaseModel):
 class ServiceConfig(BaseModel):
     name: str
     description: str = ""
-    workspace: str
+    workspace: str = ""  # 部署根目录；仓库中留空（不维护定制路径），创建实例时必须有值
     nodes: list[str] = Field(default_factory=list)  # 目标节点白名单，空 = 全部节点
     hidden: bool = False  # 模板标记：不出现在服务列表，不可启动（如 example）
     allow_duplicate_start: bool = False  # 允许同节点重复启动（默认禁止：已有运行实例时拒绝）
@@ -191,12 +191,21 @@ class ServiceConfig(BaseModel):
     @field_validator("workspace")
     @classmethod
     def _check_workspace(cls, v: str) -> str:
+        # 允许为空：仓库中的 service.json 不维护定制化的部署路径，
+        # 实际路径由部署环境注入/实例创建时指定。空值在创建实例时会被拒绝（见 tasks.create）。
         v = v.strip()
-        if not v or not WORKSPACE_RE.match(v):
+        if not v:
+            return ""
+        if not WORKSPACE_RE.match(v):
             raise ValueError(
                 f"workspace 非法: {v!r}（须为绝对路径或 ~/ 开头，仅允许字母数字与 ._- ）"
             )
         return v
+
+    @property
+    def has_workspace(self) -> bool:
+        """服务是否已配置部署根目录；未配置时不允许创建/部署实例。"""
+        return bool(self.workspace)
 
     @model_validator(mode="after")
     def _check_variables(self) -> "ServiceConfig":

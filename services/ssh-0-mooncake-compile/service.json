@@ -4,7 +4,7 @@
   "nodes": [
     "node4-compile"
   ],
-  "workspace": "/home/w00921547/Services-Deployment/mooncake-compile",
+  "workspace": "",
   "start": {
     "script": "build-mooncake.sh",
     "args": [],

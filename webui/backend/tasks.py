@@ -200,6 +200,13 @@ class TaskManager:
             service_name, action, nodes, variables or {}, args or [])
         if service is None and action not in ("stop", "delete"):
             raise TaskError(f"服务 {service_name} 配置不存在（已删除），仅支持对实例执行停止/删除")
+        # workspace 未配置时拒绝创建/部署：仓库中的 service.json 不维护部署路径，
+        # 需由部署环境补齐后再操作（查看/停止/删除已有实例不受影响）。
+        if action in ("create", "deploy") and service is not None and not service.has_workspace:
+            raise TaskError(
+                f"服务 {service_name} 未配置 workspace，无法{'创建' if action == 'create' else '部署'}实例；"
+                f"请先在该服务的 service.json 中填写部署根目录"
+            )
         clean_paths: list[str] = []
         if action == "clean":
             for p in (paths or [])[:16]:

@@ -4,7 +4,7 @@
   "nodes": [
     "node4-compile"
   ],
-  "workspace": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile",
+  "workspace": "",
   "start": {
     "script": "run-compile.sh",
     "args": [],

@@ -4,7 +4,7 @@
   "hidden": true,
   "nodes": [],
   "allow_duplicate_start": false,
-  "workspace": "/data/services/example",
+  "workspace": "",
   "start": {
     "script": "start.sh",
     "args": [],
@@ -15,7 +15,10 @@
     "timeout": 10
   },
   "deploy": {
-    "files": ["start.sh", "stop.sh"]
+    "files": [
+      "start.sh",
+      "stop.sh"
+    ]
   },
   "variables": {
     "EXAMPLE_VAR": "value"

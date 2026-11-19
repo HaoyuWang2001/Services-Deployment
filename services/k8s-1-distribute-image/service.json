@@ -6,7 +6,7 @@
     "k8s-controller-16nodes"
   ],
   "allow_duplicate_start": false,
-  "workspace": "/home/w00921547/Services-Deployment/k8s-1-distribute-image",
+  "workspace": "",
   "start": {
     "script": "distribute-image.sh",
     "args": [],

@@ -1,7 +1,7 @@
 {
   "name": "ssh-2-mooncake-master",
   "description": "Master",
-  "workspace": "/home/w00921547/Services-Deployment/mooncake-master",
+  "workspace": "",
   "start": {
     "script": "run_mooncake_store_master_ha.sh",
     "args": [],
