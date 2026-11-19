@@ -28,7 +28,7 @@
     "GIT_BRANCH": "",
     "COMMIT_ID": "",
     "BUILD_SCRIPT": "build-mooncake.sh",
-    "SCRIPT_DEST_DIR": "/workspace",
+    "CONTAINER_SCRIPT_DIR": "/workspace",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
     "CLEAN_BUILD": "false",

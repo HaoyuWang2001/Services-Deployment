@@ -13,7 +13,7 @@
 #   2. 校验目标容器存在且运行中（复用，不新起、不删除）
 #   3. 校验容器内仓库存在，并解析打印 分支 / commit（必须在拉取代码之前打印）
 #   4. 容器内拉取代码（git config 注入代理；校验分支/commit 存在；fetch/checkout/reset）
-#   5. 注入编译脚本（服务目录 <BUILD_SCRIPT> → 容器 SCRIPT_DEST_DIR）
+#   5. 注入编译脚本（服务目录 <BUILD_SCRIPT> → 容器内 CONTAINER_SCRIPT_DIR）
 #   6. 【环境变量注入】把 FREQ_VARS 写入容器 build.env（SRC_ROOT/CLEAN_BUILD/VENV，代理变量仅当 PROXY_IP 非空时写入）
 #   7. 容器内执行编译脚本（先 source build.env；输出随服务日志可见，即监视）—— 成功即完成
 #   8. 容器保留（不删除，供下次复用）
@@ -48,7 +48,8 @@ BUILD_SCRIPT="${BUILD_SCRIPT:-build-mooncake.sh}"
 # 编译脚本随服务部署到服务目录（SCRIPT_DIR），不再依赖外部 scp 目录
 BUILD_SCRIPT_SRC="${SCRIPT_DIR}/${BUILD_SCRIPT}"
 
-SCRIPT_DEST_DIR="${SCRIPT_DEST_DIR:-/workspace}"
+# 容器内编译脚本存放目录（编译脚本与 build.env 都落在这里；不是宿主机路径）
+CONTAINER_SCRIPT_DIR="${CONTAINER_SCRIPT_DIR:-${SCRIPT_DEST_DIR:-/workspace}}"
 
 # 代理（可选）：PROXY_IP 为空表示不使用代理；PROXY_PORT 默认 3128
 PROXY_IP="${PROXY_IP:-}"
@@ -229,22 +230,22 @@ INFO "已 checkout 的 commit: ${ACTUAL_COMMIT}（产物目录名由编译脚本
 # ============================================================
 # STEP 4. 注入编译脚本（运行时打印 STEP 5）
 # ============================================================
-STEP "注入编译脚本: ${BUILD_SCRIPT_SRC} → ${CONTAINER_NAME}:${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
+STEP "注入编译脚本(容器内): ${BUILD_SCRIPT_SRC} → ${CONTAINER_NAME}:${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
 
-docker exec "${CONTAINER_NAME}" mkdir -p "${SCRIPT_DEST_DIR}"
-docker cp "${BUILD_SCRIPT_SRC}" "${CONTAINER_NAME}:${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
-docker exec "${CONTAINER_NAME}" test -x "${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}" \
-    || docker exec "${CONTAINER_NAME}" chmod +x "${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
-INFO "编译脚本已注入: ${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
+docker exec "${CONTAINER_NAME}" mkdir -p "${CONTAINER_SCRIPT_DIR}"
+docker cp "${BUILD_SCRIPT_SRC}" "${CONTAINER_NAME}:${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
+docker exec "${CONTAINER_NAME}" test -x "${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}" \
+    || docker exec "${CONTAINER_NAME}" chmod +x "${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
+INFO "编译脚本已注入(容器内): ${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
 
 # ============================================================
 # STEP 5. 【环境变量注入】写入 FREQ_VARS 到 build.env（运行时打印 STEP 6）
 # ============================================================
-STEP "【环境变量注入】写入 build.env（SRC_ROOT/CLEAN_BUILD/VENV，代理仅当 PROXY_IP 非空）"
+STEP "【环境变量注入】写入 build.env(容器内 ${CONTAINER_SCRIPT_DIR}/build.env)"
 
 prepare_build_env() {
-    local env_path="${SCRIPT_DEST_DIR}/build.env"
-    docker exec "${CONTAINER_NAME}" mkdir -p "${SCRIPT_DEST_DIR}"
+    local env_path="${CONTAINER_SCRIPT_DIR}/build.env"
+    docker exec "${CONTAINER_NAME}" mkdir -p "${CONTAINER_SCRIPT_DIR}"
     # 通过 stdin 写入，避免主机 shell 二次展开；变量值在主机侧已确定，单引号保护
     # 仅当配置 PROXY_IP 时注入代理变量；否则让编译脚本使用容器自身代理/直连配置
     {
@@ -257,7 +258,7 @@ prepare_build_env() {
             echo "export PROXY_PORT='${PROXY_PORT}'"
         fi
     } | docker exec -i "${CONTAINER_NAME}" bash -c "cat > '${env_path}'"
-    INFO "build.env 已写入容器 ${env_path}（SRC_ROOT/CLEAN_BUILD/VENV${PROXY_IP:+ +PROXY_IP/PROXY_PORT}）"
+    INFO "build.env 已写入(容器内) ${env_path}（SRC_ROOT/CLEAN_BUILD/VENV${PROXY_IP:+ +PROXY_IP/PROXY_PORT}）"
 }
 prepare_build_env
 
@@ -268,11 +269,11 @@ STEP "执行编译脚本（日志进入服务日志，可实时监视）"
 
 # 进入容器执行：先 source build.env（含 FREQ_VARS），再运行编译脚本。
 docker exec \
-    -e "SCRIPT_DEST_DIR=${SCRIPT_DEST_DIR}" \
+    -e "CONTAINER_SCRIPT_DIR=${CONTAINER_SCRIPT_DIR}" \
     -e "BUILD_SCRIPT=${BUILD_SCRIPT}" \
     "${CONTAINER_NAME}" bash -c '
 set -euo pipefail
-cd "${SCRIPT_DEST_DIR}"
+cd "${CONTAINER_SCRIPT_DIR}"
 # 注入的环境变量（SRC_ROOT/CLEAN_BUILD/VENV；PROXY_IP/PROXY_PORT 仅当非空时由 build.env 提供）
 if [[ -f build.env ]]; then
     set -a
@@ -309,7 +310,7 @@ echo "SUCCESS: Mooncake 编译编排完成"
 echo "  container   : ${CONTAINER_NAME} (复用，未删除)"
 echo "  branch      : ${EFF_BRANCH}"
 echo "  commit      : ${EFF_COMMIT:-<latest>} (actual ${ACTUAL_COMMIT})"
-echo "  build script: ${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
+echo "  build script: 容器内 ${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
 echo "  artifacts   : 保留在容器内 ${REPO_DIR}/outputs/（本服务不再拷贝到宿主机）"
 
 echo "============================================================"
