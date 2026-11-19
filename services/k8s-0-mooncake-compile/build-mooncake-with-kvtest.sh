@@ -57,17 +57,45 @@ if [[ "${CLEAN_BUILD}" == "true" && -d "${BUILD_DIR}" ]]; then
     rm -rf "${BUILD_DIR}"
 fi
 
-echo ">> Configure CMake (modern -B build style)"
+echo ">> Configure CMake (modern -B build style, Ninja+ccache 加速)"
 SPDIAG_DIR="/usr/lib64/cmake/SpDiag"
 SPDIAG_CLI="/usr/bin/spdiag"
 URMA_ROOT="/usr/include/ub/umdk/urma"
 UMDK_ROOT="/usr/include/ub/umdk/urma"
 URMA_LIBRARY="/usr/lib64/liburma.so"
 
-export CXXFLAGS="${CXXFLAGS:-} -w"
-export CFLAGS="${CFLAGS:-} -w"
+# -pipe：编译走管道、少落临时文件，多核并发时省 I/O（参考 ssh-0-mooncake-compile）
+export CXXFLAGS="${CXXFLAGS:-} -w -pipe"
+export CFLAGS="${CFLAGS:-} -w -pipe"
 
-cmake -B "${BUILD_DIR}" -S . \
+# 生成器优先 Ninja（多核调度开销小于 Make）；容器未装 ninja 则回退默认(Make)
+GEN_ARGS=""
+if command -v ninja >/dev/null 2>&1; then
+    GEN_ARGS="-G Ninja"
+    # 旧 build 目录的 CMakeCache 生成器与 Ninja 不匹配会报错，首次切换时自动清理一次
+    if [[ -f "${BUILD_DIR}/CMakeCache.txt" ]] && \
+       ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' "${BUILD_DIR}/CMakeCache.txt"; then
+        echo "[INFO] Generator changed to Ninja, cleaning build dir: ${BUILD_DIR}"
+        rm -rf "${BUILD_DIR}"
+    fi
+    echo "[INFO] 使用 Ninja 生成器"
+else
+    echo "[WARN] 容器未安装 ninja，回退到默认生成器（Make）"
+fi
+
+# 增量编译优先走 ccache；未安装则跳过（每次全量）
+CCACHE_ARGS=""
+if command -v ccache >/dev/null 2>&1; then
+    CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+    echo "[INFO] 使用 ccache 加速增量编译"
+else
+    echo "[WARN] 容器未安装 ccache，跳过（每次全量编译）"
+fi
+
+# 加速相关选项（参考 ssh-0-mooncake-compile）：
+#   -DCMAKE_BUILD_TYPE=Release        -O3（RelWithDebInfo 为 -O2 -g），实测快 3-5%
+#   -DENABLE_DEBUG_SYMBOLS=OFF        关掉 common.cmake 强加的 -g，去符号省编译时间/内存/.o 体积
+cmake -B "${BUILD_DIR}" -S . ${GEN_ARGS} ${CCACHE_ARGS} \
   -DUSE_UB=ON \
   -DUSE_CUDA=OFF \
   -DUSE_URING=ON \
@@ -83,7 +111,8 @@ cmake -B "${BUILD_DIR}" -S . \
   -DBUILD_UNIT_TESTS=OFF \
   -DBUILD_EXAMPLES=ON \
   -DBUILD_SHARED_LIBS=OFF \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DENABLE_DEBUG_SYMBOLS=OFF \
   -DCMAKE_SKIP_RPATH=ON \
   -DCMAKE_DISABLE_FIND_PACKAGE_AWSSDK=ON \
   -DMOONCAKE_ENABLE_SPDIAG=ON \
@@ -98,7 +127,7 @@ echo ">> Build targets"
 export GOPROXY="http://mirrors.aliyun.com/goproxy,direct"
 export GOINSECURE="go.etcd.io/etcd"
 export GOSUMDB="sum.golang.org"
-cmake --build "${BUILD_DIR}" -j64 --target mooncake_master mooncake_client engine store transfer_engine_bench stress_cluster_bench mooncake_kvtest
+cmake --build "${BUILD_DIR}" -j"$(nproc)" --target mooncake_master mooncake_client engine store transfer_engine_bench stress_cluster_bench mooncake_kvtest
 
 echo ">> Build python wheel"
 if [[ -n "${VENV}" ]]; then
