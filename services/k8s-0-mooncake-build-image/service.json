@@ -18,6 +18,8 @@
   },
   "variables": {
     "COMMIT_ID": "",
+    "ARTIFACT_SOURCE": "container",
+    "ARTIFACT_HOST_DIR": "/home/haoyu/k8s-ws/k8s-0-mooncake-compile/artifacts",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
     "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
