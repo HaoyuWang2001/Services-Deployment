@@ -1,6 +1,6 @@
 {
   "name": "k8s-0-mooncake-compile",
-  "description": "自起编译容器（COMPILE_IMAGE:COMPILE_IMAGE_TAG）完成 Mooncake 编译：容器内拉取指定分支/commit 代码（git config 注入代理）、注入并执行编译脚本（脚本随服务部署到服务目录，由 BUILD_SCRIPT 选择）、将编译产物 docker cp 到容器外 ARTIFACT_DST，最后完全关闭并删除编译容器。独立流程，不走 push-lab.sh。",
+  "description": "复用一台已启动的编译容器完成 Mooncake 编译：容器内拉取指定分支/commit 代码（git config 注入代理）、注入并执行编译脚本、将产物 docker cp 到宿主机 ARTIFACT_DST（保留 mooncake-<commit>-<arch> 目录层级）。不新建、不删除容器，因此容器内的 build 缓存与 Go 依赖可跨次复用。独立流程，不走 push-lab.sh。",
   "nodes": [
     "node4-compile"
   ],
@@ -23,8 +23,6 @@
     ]
   },
   "variables": {
-    "COMPILE_IMAGE": "mooncake-compile-w00921547-base",
-    "COMPILE_IMAGE_TAG": "latest",
     "CONTAINER_NAME": "mooncake-compile-w00921547",
     "REPO_DIR": "/home/haoyu/Mooncake",
     "GIT_BRANCH": "",
@@ -33,7 +31,7 @@
     "SCRIPT_DEST_DIR": "/workspace",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
-    "CLEAN_BUILD": "true",
+    "CLEAN_BUILD": "false",
     "VENV": "",
     "ARTIFACT_DST": ""
   },

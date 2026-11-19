@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
 #
-# k8s-0-mooncake-compile —— 自起编译容器，容器内编译，产物拷出，最后销毁容器
+# k8s-0-mooncake-compile —— 复用已启动的编译容器，容器内编译，产物拷出
 #
-# 与 k8s-0-mooncake-build-image 同源：服务运行在编译机（node4-compile）上，
-# 通过 docker 驱动编译容器完成工作，自身不直接编译。
+# 服务运行在编译机（node4-compile）上，通过 docker exec 在**已存在的容器**内完成编译。
+# 容器由用户预先 `docker run` 启动，本服务只借用：
+#   - 不新建容器（不再从镜像 cold start）
+#   - 不删除、不停止容器（编译结束或失败都保留原样）
+# 好处：容器内的 build/ 目录、ccache、Go module 缓存得以保留，后续编译是增量而非从 0 开始。
 #
 # 全流程（按顺序）：
-#   0. 预检（docker / 镜像存在 / 代理必填 / ARTIFACT_DST 必填 / 编译脚本已部署 / 容器名冲突）
-#   1. 启动编译容器（从 COMPILE_IMAGE:COMPILE_IMAGE_TAG 起一个常驻容器）
+#   0. 预检（docker / 目标容器运行中 / 代理可选 / ARTIFACT_DST 必填 / 编译脚本已部署）
+#   1. 校验目标容器存在且运行中（复用，不新起、不删除）
 #   2. 校验容器内仓库存在，并解析打印 分支 / commit（必须在拉取代码之前打印）
 #   3. 容器内拉取代码（git config 注入代理；校验分支/commit 存在；fetch/checkout/reset）
 #   4. 注入编译脚本（服务目录 <BUILD_SCRIPT> → 容器 SCRIPT_DEST_DIR）
 #   5. 【环境变量注入】把 FREQ_VARS 写入容器 build.env（SRC_ROOT/CLEAN_BUILD/VENV，代理变量仅当 PROXY_IP 非空时写入）
 #   6. 容器内执行编译脚本（先 source build.env；输出随服务日志可见，即监视）
-#   7. 拷贝编译产物：容器 ARTIFACT_SRC（推导=REPO_DIR/outputs/mooncake-<commit>-aarch64-linux）→ host ARTIFACT_DST
-#   8. 关闭并删除编译容器
+#   7. 拷贝编译产物：容器 REPO_DIR/outputs/mooncake-<commit>-<arch> → host ARTIFACT_DST（保留目录层级）
+#   8. 容器保留（不删除，供下次复用）
 #   9. 汇总
 #
-# 失败语义：任一步失败 → on_error 尽力清理容器后非零退出（避免容器泄漏）。
+# 失败语义：任一步失败 → 非零退出；容器始终保留，便于排查与复用。
 #
 # 说明：
 #   - 编译脚本随服务一起部署到服务目录（与 run-compile.sh 同目录，即 SCRIPT_DIR），
-#     不再依赖外部 scp 目录；用 BUILD_SCRIPT 变量选择要注入并执行哪一个。
-# 容器内仓库已 clone 好（REPO_DIR 可配），本服务只做 fetch / checkout / reset。
+#     用 BUILD_SCRIPT 变量选择要注入并执行哪一个。
+#   - 容器内仓库已 clone 好（REPO_DIR 可配），本服务只做 fetch / checkout / reset。
 #   - 容器通常以 root 运行而仓库属主可能不是 root，git 会报 "dubious ownership" 并拒绝操作；
 #     这里通过 GIT_CONFIG_* 环境变量（等价于 git config --global safe.directory='*'）消除该限制，
 #     不改镜像、不落盘任何 git 配置。
@@ -35,10 +38,6 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ===================== 配置项（来自 service.json variables，可被任务覆盖） =====================
-
-COMPILE_IMAGE="${COMPILE_IMAGE:-mooncake-compile-w00921547-base}"
-COMPILE_IMAGE_TAG="${COMPILE_IMAGE_TAG:-latest}"
-FULL_IMAGE="${COMPILE_IMAGE}:${COMPILE_IMAGE_TAG}"
 
 # 本服务自行拉起/销毁的运行时容器名
 CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile-w00921547}"
@@ -63,7 +62,7 @@ PULL_PROXY_FLAGS=()
 ARTIFACT_DST="${ARTIFACT_DST:-}"      # 必填；STEP 0 校验非空
 
 # 注入编译脚本的环境变量（FREQ_VARS）
-CLEAN_BUILD="${CLEAN_BUILD:-true}"
+CLEAN_BUILD="${CLEAN_BUILD:-false}"
 VENV="${VENV:-}"
 
 # 产物源目录——运行时推导（编译完成后取编译脚本实际生成的那个目录），此处仅声明
@@ -93,11 +92,8 @@ ERROR() { echo "[ERROR $(date '+%F %T')] $*" >&2; }
 on_error() {
     local rc=$?
     ERROR "编译编排失败（rc=${rc}${CURRENT_STEP:+，步骤：${CURRENT_STEP}}）"
-    # 尽力清理容器，避免泄漏（失败不致命）
-    if docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1; then
-        WARN "异常退出，清理编译容器: ${CONTAINER_NAME}"
-        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-    fi
+    # 容器由外部启动、本服务只借用，失败时保留原样（不 stop、不删除），便于排查与复用
+    WARN "容器已保留（未删除）: ${CONTAINER_NAME}"
     exit "$rc"
 }
 trap on_error ERR
@@ -105,13 +101,9 @@ trap on_error ERR
 # ============================================================
 # STEP 0. 预检
 # ============================================================
-STEP "预检（docker / 镜像 / 代理可选 / ARTIFACT_DST 必填 / 编译脚本已部署 / 容器名冲突）"
+STEP "预检（docker / 目标容器运行中 / 代理可选 / ARTIFACT_DST 必填 / 编译脚本已部署）"
 
 command -v docker >/dev/null 2>&1 || { ERROR "未找到 docker（本服务需在编译机上执行）"; exit 1; }
-
-docker image inspect "${FULL_IMAGE}" >/dev/null 2>&1 \
-    || { ERROR "镜像不存在: ${FULL_IMAGE}（请先构建/拉取基础镜像）"; exit 1; }
-INFO "镜像就绪: ${FULL_IMAGE}"
 
 # 代理（可选）：PROXY_IP 为空 → 不使用代理（git 直连、编译脚本也直连，依赖容器自身网络配置）
 if [[ -n "${PROXY_IP}" ]]; then
@@ -137,31 +129,20 @@ if [[ ! -f "${BUILD_SCRIPT_SRC}" ]]; then
 fi
 INFO "编译脚本(部署): ${BUILD_SCRIPT_SRC}"
 
-# 容器名冲突处理：同名容器存在则先移除（幂等，便于重跑）
-if docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1; then
-    WARN "同名容器已存在，先移除: ${CONTAINER_NAME}"
-    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-fi
-
 # ============================================================
-# STEP 1. 启动编译容器
+# STEP 1. 校验目标容器已存在且运行中（复用，不新起、不删除）
 # ============================================================
-STEP "启动编译容器: ${FULL_IMAGE} → ${CONTAINER_NAME}"
+STEP "校验目标容器: ${CONTAINER_NAME}"
 
-docker run -d --name "${CONTAINER_NAME}" \
-    --entrypoint /bin/sh \
-    "${FULL_IMAGE}" -c 'while true; do sleep 3600; done' >/dev/null
+docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1 \
+    || { ERROR "容器不存在: ${CONTAINER_NAME}（本服务复用已启动的容器，请先手动 docker run 启动它）"; exit 1; }
 
-READY=false
-for _ in $(seq 1 30); do
-    if docker exec "${CONTAINER_NAME}" true >/dev/null 2>&1; then
-        READY=true
-        break
-    fi
-    sleep 1
-done
-[[ "${READY}" == "true" ]] || { ERROR "编译容器未能就绪: ${CONTAINER_NAME}"; exit 1; }
-INFO "容器就绪: ${CONTAINER_NAME}"
+[[ "$(docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}")" == "true" ]] \
+    || { ERROR "容器未运行: ${CONTAINER_NAME}（请先 docker start ${CONTAINER_NAME}）"; exit 1; }
+
+docker exec "${CONTAINER_NAME}" true >/dev/null 2>&1 \
+    || { ERROR "容器无法执行命令: ${CONTAINER_NAME}"; exit 1; }
+INFO "目标容器就绪（复用已有容器，保留其 build 缓存与 Go 依赖）: ${CONTAINER_NAME}"
 
 # ============================================================
 # STEP 2. 校验仓库存在 + 解析并打印分支 / commit（必须在拉取之前）
@@ -170,7 +151,7 @@ STEP "校验容器内仓库并解析 分支 / commit（拉取代码前）"
 
 # 容器内 REPO_DIR 必须是 git 工作区
 docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    || { ERROR "容器内未找到 git 仓库: ${REPO_DIR}（基础镜像应已 clone）"; exit 1; }
+    || { ERROR "容器内未找到 git 仓库: ${REPO_DIR}（容器内 REPO_DIR 应为已 clone 的 git 仓库）"; exit 1; }
 INFO "容器内仓库就绪: ${REPO_DIR}"
 
 RESOLVED="$(docker exec \
@@ -365,12 +346,15 @@ INFO "产物已拷出: ${HOST_ARTIFACT_DIR}"
 } || true
 
 # ============================================================
-# STEP 8. 关闭并删除编译容器
+# STEP 8. 容器保留（不删除，供下次复用）
 # ============================================================
-STEP "关闭并删除编译容器: ${CONTAINER_NAME}"
+STEP "容器保留: ${CONTAINER_NAME}"
 
-docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-INFO "容器已删除: ${CONTAINER_NAME}"
+# 容器由外部启动，本服务只借用；不 stop、不删除，
+# 以便下次编译复用其中的 build 目录、ccache 与 Go module 缓存。
+docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1 \
+    && INFO "容器仍运行（未删除）: ${CONTAINER_NAME}" \
+    || WARN "容器当前未运行: ${CONTAINER_NAME}"
 
 # ============================================================
 # STEP 9. 汇总
@@ -379,11 +363,11 @@ STEP "汇总"
 echo
 echo "============================================================"
 echo "SUCCESS: Mooncake 编译编排完成"
-echo "  image       : ${FULL_IMAGE}"
+echo "  container   : ${CONTAINER_NAME} (复用，未删除)"
 echo "  branch      : ${EFF_BRANCH}"
 echo "  commit      : ${EFF_COMMIT:-<latest>} (actual ${ACTUAL_COMMIT})"
 echo "  build script: ${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
 echo "  artifacts   : ${HOST_ARTIFACT_DIR:-${ARTIFACT_DST}} (host，含 ${ARTIFACT_DIR_NAME:-mooncake-<commit>-${ARCH}} 目录)"
-echo "  container   : ${CONTAINER_NAME} (已删除)"
+
 echo "============================================================"
 exit "${RC}"
