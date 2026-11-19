@@ -9,14 +9,13 @@
 # 好处：容器内的 build/ 目录、ccache、Go module 缓存得以保留，后续编译是增量而非从 0 开始。
 #
 # 全流程（按顺序）：
-#   0. 预检（docker / 目标容器运行中 / 代理可选 / ARTIFACT_DST 必填 / 编译脚本已部署）
+#   0. 预检（docker / 目标容器运行中 / 代理可选 / 编译脚本已部署）
 #   1. 校验目标容器存在且运行中（复用，不新起、不删除）
 #   2. 校验容器内仓库存在，并解析打印 分支 / commit（必须在拉取代码之前打印）
 #   3. 容器内拉取代码（git config 注入代理；校验分支/commit 存在；fetch/checkout/reset）
 #   4. 注入编译脚本（服务目录 <BUILD_SCRIPT> → 容器 SCRIPT_DEST_DIR）
 #   5. 【环境变量注入】把 FREQ_VARS 写入容器 build.env（SRC_ROOT/CLEAN_BUILD/VENV，代理变量仅当 PROXY_IP 非空时写入）
 #   6. 容器内执行编译脚本（先 source build.env；输出随服务日志可见，即监视）
-#   7. 拷贝编译产物：容器 REPO_DIR/outputs/mooncake-<commit>-<arch> → host ARTIFACT_DST（保留目录层级）
 #   8. 容器保留（不删除，供下次复用）
 #   9. 汇总
 #
@@ -31,7 +30,6 @@
 #     不改镜像、不落盘任何 git 配置。
 #   - 代理（可选）：PROXY_IP 为空表示不使用代理。此时 git 拉取与编译脚本均直连，
 #     依赖容器自身网络/代理配置；仅当 PROXY_IP 非空时才注入 git config 与 build.env 代理变量。
-#   - ARTIFACT_SRC 不暴露为变量：产物目录在 checkout 之后按实际短 commit 推导。
 #
 set -Eeuo pipefail
 
@@ -59,15 +57,11 @@ PROXY_URL=""
 PULL_PROXY_FLAGS=()
 
 # 产物拷出（host 侧，必填，无默认）
-ARTIFACT_DST="${ARTIFACT_DST:-}"      # 必填；STEP 0 校验非空
 
 # 注入编译脚本的环境变量（FREQ_VARS）
 CLEAN_BUILD="${CLEAN_BUILD:-false}"
 VENV="${VENV:-}"
 
-# 产物源目录——运行时推导（编译完成后取编译脚本实际生成的那个目录），此处仅声明
-ARTIFACT_SRC=""
-ARTIFACT_DIR_NAME=""
 ACTUAL_COMMIT=""
 
 # 容器内 git 统一附加的配置：safe.directory=*（规避 root 与仓库属主不一致时的 dubious ownership）
@@ -101,7 +95,7 @@ trap on_error ERR
 # ============================================================
 # STEP 0. 预检
 # ============================================================
-STEP "预检（docker / 目标容器运行中 / 代理可选 / ARTIFACT_DST 必填 / 编译脚本已部署）"
+STEP "预检（docker / 目标容器运行中 / 代理可选 / 编译脚本已部署）"
 
 command -v docker >/dev/null 2>&1 || { ERROR "未找到 docker（本服务需在编译机上执行）"; exit 1; }
 
@@ -114,12 +108,6 @@ if [[ -n "${PROXY_IP}" ]]; then
     PULL_PROXY_FLAGS+=( -e "no_proxy=localhost,127.0.0.1" )
 else
     INFO "未配置 PROXY_IP：不使用代理（git 拉取与编译均直连，依赖容器自身网络/代理配置）"
-fi
-
-# ARTIFACT_DST 必填（空 → 拒绝运行，避免误拷到宿主根目录）
-if [[ -z "${ARTIFACT_DST}" ]]; then
-    ERROR "ARTIFACT_DST 必填（host 侧产物目录，请手动指定）"
-    exit 1
 fi
 
 # 编译脚本（随服务部署到 SCRIPT_DIR）必须存在
@@ -296,54 +284,9 @@ exec bash "./${BUILD_SCRIPT}"
 RC=$?
 INFO "编译脚本退出码: ${RC}"
 
-# ============================================================
-# 解析编译脚本实际生成的产物目录
-# ============================================================
-# 目录名由编译脚本自己决定（其内部按 git rev-parse --short HEAD 拼
-# mooncake-<commit>-<arch>），本服务不猜测，直接读取 ${REPO_DIR}/outputs
-# 下本次编译刚刚生成的 mooncake-* 目录。
-OUTPUTS_DIR="${REPO_DIR}/outputs"
-# 只认本次构建新产出的目录：按修改时间取最新的 mooncake-* 目录
-ARTIFACT_SRC="$(docker exec "${CONTAINER_NAME}" bash -c '
-set -euo pipefail
-d="$(ls -1dt "'"${OUTPUTS_DIR}"'"/mooncake-* 2>/dev/null | head -n1 || true)"
-[ -n "${d}" ] && echo "${d}"
-' 2>/dev/null || true)"
-
-if [[ -z "${ARTIFACT_SRC}" ]]; then
-    ERROR "未在 ${OUTPUTS_DIR} 找到产物目录 mooncake-*（编译脚本可能未产出）"
-    exit 1
-fi
-ARTIFACT_DIR_NAME="$(basename "${ARTIFACT_SRC}")"
-INFO "产物目录(编译脚本生成): ${ARTIFACT_SRC}"
-
-# ============================================================
-# STEP 7. 拷贝编译产物到容器外指定目录
-# ============================================================
-STEP "拷贝编译产物: ${CONTAINER_NAME}:${ARTIFACT_SRC} → ${ARTIFACT_DST}/ (host，保留目录层级)"
-
-docker exec "${CONTAINER_NAME}" test -d "${ARTIFACT_SRC}" \
-    || { ERROR "容器内产物目录不存在: ${ARTIFACT_SRC}（请确认编译脚本输出位置）"; exit 1; }
-
-# 拷贝「整个 mooncake-<commit>-<arch> 目录」（不是其内容）：
-#   docker cp <容器>:<目录> <宿主目录>/  → 落地为 <宿主目录>/mooncake-<commit>-<arch>/{bin,lib,dist,...}
-# 注意不能写成 "${ARTIFACT_SRC}/."，那样会把 bin/lib/dist 直接摊平到 ARTIFACT_DST 下、丢掉版本目录层级。
-mkdir -p "${ARTIFACT_DST}"
-rm -rf "${ARTIFACT_DST}/${ARTIFACT_DIR_NAME}"
-docker cp "${CONTAINER_NAME}:${ARTIFACT_SRC}" "${ARTIFACT_DST}/"
-
-HOST_ARTIFACT_DIR="${ARTIFACT_DST}/${ARTIFACT_DIR_NAME}"
-[[ -d "${HOST_ARTIFACT_DIR}" ]] \
-    || { ERROR "产物目录未按预期落地: ${HOST_ARTIFACT_DIR}"; exit 1; }
-INFO "产物已拷出: ${HOST_ARTIFACT_DIR}"
-{
-    echo "[INFO] 产物清单（前 40 项）:"
-    ls -la "${HOST_ARTIFACT_DIR}" 2>/dev/null | head -n 20
-    for sub in bin lib dist; do
-        [[ -d "${HOST_ARTIFACT_DIR}/${sub}" ]] \
-            && echo "  ${sub}: $(ls -A "${HOST_ARTIFACT_DIR}/${sub}" | wc -l) 项"
-    done
-} || true
+# 编译成功即完成：不再解析/拷贝产物到宿主机。
+# 产物保留在容器内（编译脚本自身的输出目录，如 ${REPO_DIR}/outputs/mooncake-<commit>-<arch>），
+# 需要时由下游服务（如 k8s-0-mooncake-build-image 通过 ARTIFACT_DIR）直接从容器取用。
 
 # ============================================================
 # STEP 8. 容器保留（不删除，供下次复用）
@@ -367,7 +310,7 @@ echo "  container   : ${CONTAINER_NAME} (复用，未删除)"
 echo "  branch      : ${EFF_BRANCH}"
 echo "  commit      : ${EFF_COMMIT:-<latest>} (actual ${ACTUAL_COMMIT})"
 echo "  build script: ${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
-echo "  artifacts   : ${HOST_ARTIFACT_DIR:-${ARTIFACT_DST}} (host，含 ${ARTIFACT_DIR_NAME:-mooncake-<commit>-${ARCH}} 目录)"
+echo "  artifacts   : 保留在容器内 ${REPO_DIR}/outputs/（本服务不再拷贝到宿主机）"
 
 echo "============================================================"
 exit "${RC}"
