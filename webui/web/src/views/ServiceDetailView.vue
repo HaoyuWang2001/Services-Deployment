@@ -4,7 +4,7 @@
     <el-button class="mt-3" @click="$router.push('/services')">返回服务列表</el-button>
   </div>
 
-  <div v-else v-loading="!cfg">
+  <div v-else v-loading="!cfg" class="sd-page">
     <!-- 页头 -->
     <PageHeader :title="name" description="服务配置、实例创建与运行实例管理" back @back="$router.push('/services')">
       <template #badge>
@@ -16,7 +16,7 @@
     </PageHeader>
 
     <!-- 启动实例 -->
-    <el-card shadow="never" class="block">
+    <el-card shadow="never">
       <template #header>
         <div class="sd-card-head">
           <span>启动实例</span>
@@ -47,10 +47,8 @@
       <div v-if="Object.keys(cfg?.variables || {}).length" class="var-form">
         <span class="label">变量覆盖：</span>
         <div class="var-inputs">
-          <div v-for="(_, k) in cfg.variables" :key="k" class="var-input">
-            <span class="var-key">{{ k }}</span>
-            <el-input v-model="varsOverride[k]" size="small" style="width: 220px" :placeholder="`默认 ${cfg.variables[k]}`" />
-          </div>
+          <VarOverrideRow v-for="(def, k) in cfg.variables" :key="k"
+                          v-model="varsOverride[k]" :var-name="k" :default-value="def" />
         </div>
       </div>
       <div class="args-form">
@@ -73,7 +71,7 @@
     </el-card>
 
     <!-- 运行实例 -->
-    <el-card shadow="never" class="block">
+    <el-card shadow="never">
       <template #header>
         <div class="sd-card-head">
           <div class="inst-title">
@@ -242,9 +240,8 @@
           </el-select>
           <div class="field-hint">配置后仅允许在这些节点上启动该服务（如 etcd 仅 node4）</div>
         </el-form-item>
-        <el-form-item label="重复启动">
+        <el-form-item label="允许重复启动">
           <el-switch v-model="form.allowDup" />
-          <div class="field-hint">默认关闭（禁止重复启动）：同节点已有运行中实例时拒绝启动；开启后允许（旧实例进程需自行管理）</div>
         </el-form-item>
         <el-form-item label="默认变量">
           <div class="vars-editor">
@@ -276,6 +273,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { api, ACTION_TEXT, fmtTime, fmtTimeRel } from '../api'
 import { trackTask } from '../taskNotify'
 import PageHeader from '../components/PageHeader.vue'
+import VarOverrideRow from '../components/VarOverrideRow.vue'
 import { isDark } from '../theme'
 import {
   ABNORMAL_HINT, DELETABLE, RESTARTABLE, STARTABLE, STOPPABLE, TRANSIENT,
@@ -687,7 +685,6 @@ onDeactivated(() => clearInterval(timer))
 
 <style scoped>
 .err-block { max-width: 560px; margin: 40px auto; text-align: center; }
-.block { margin-bottom: var(--sd-space-4); }
 .mt-2 { margin-top: var(--sd-space-2); }
 .mt-3 { margin-top: var(--sd-space-3); }
 .mb-3 { margin-bottom: var(--sd-space-3); }
@@ -722,9 +719,7 @@ onDeactivated(() => clearInterval(timer))
 .args-input { width: 380px; }
 .var-form { margin-bottom: 10px; display: flex; align-items: flex-start; }
 .var-form .label, .args-form .label { height: 24px; display: inline-flex; align-items: center; flex-shrink: 0; }
-.var-inputs { display: flex; flex-wrap: wrap; gap: 8px; }
-.var-input { display: flex; align-items: center; gap: 6px; }
-.var-key { font-size: 12px; color: var(--el-text-color-regular); }
+.var-inputs { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .inst-title { display: flex; align-items: center; gap: 8px; }
 .inst-actions { display: flex; align-items: center; }
 .auto-switch { margin-left: var(--sd-space-3); }

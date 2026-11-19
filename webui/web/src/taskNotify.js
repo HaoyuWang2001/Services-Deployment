@@ -68,6 +68,10 @@ function notify(type, title, text) {
     message: h('div', {
       style: 'white-space: pre-line; word-break: break-all; max-height: 240px; overflow: auto; font-size: 13px; line-height: 1.7;',
     }, text),
+    // 固定右下角：默认的 top-right 恰好压住「运行实例」页右上角的
+    // 启动/重启/停止/删除四个批量按钮。详见 design.md UI-001。
+    position: 'bottom-right',
+    customClass: 'sd-toast',
     duration: type === 'success' ? 3000 : 8000,
   })
 }

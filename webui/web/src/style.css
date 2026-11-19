@@ -104,6 +104,15 @@ html, body, #app {
   .el-button:not(.is-disabled):active { transform: scale(0.97); }
 }
 
+/* ------------------------------------------------ 操作提示（右下、可穿透） ----
+ * 任务结果通知固定右下角，避开页面右上角的批量操作按钮区（design.md UI-001）。
+ * pointer-events: none 让提示框整体不拦截点击；正文与关闭按钮单独恢复，
+ * 保证错误详情仍可滚动、可手动关闭。
+ * -------------------------------------------------------------------------- */
+.sd-toast { pointer-events: none; }
+.sd-toast .el-notification__content,
+.sd-toast .el-notification__closeBtn { pointer-events: auto; }
+
 /* ------------------------------------------------------------ 终端 ---- */
 .sd-term {
   background: var(--sd-term-bg);
@@ -118,7 +127,9 @@ html, body, #app {
 }
 .sd-term .line { white-space: pre-wrap; word-break: break-all; content-visibility: auto; contain-intrinsic-size: auto 21px; }
 .sd-term.no-wrap { overflow-x: auto; }
-.sd-term.no-wrap .line { white-space: pre; word-break: normal; }
+/* content-visibility 的尺寸假设只含高度（21px），横向滚动时视口外的行会被
+   跳过渲染导致内容不可见——no-wrap 模式必须关闭该优化 */
+.sd-term.no-wrap .line { white-space: pre; word-break: normal; content-visibility: visible; contain-intrinsic-size: none; }
 .sd-term .line.error { color: var(--sd-term-error); }
 .sd-term .line.notice { color: var(--sd-term-muted); font-style: italic; }
 .sd-term .line.cur-match { background: var(--sd-term-cur-bg); border-radius: 3px; }

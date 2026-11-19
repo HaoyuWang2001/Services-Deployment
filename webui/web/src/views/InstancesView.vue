@@ -275,7 +275,11 @@ async function submitGroups(action, rows) {
   }
   if (submitted.length) {
     trackTaskGroup(submitted, `${ACTION_TEXT[action]} ${rows.length} 个实例`)
-    ElMessage.success(`已提交 ${submitted.length} 个任务（覆盖 ${rows.length} 个实例）`)
+    // 只作「点击已生效」的即时反馈，最终结果由右下角任务通知负责（design.md UI-001）
+    ElMessage.success({
+      message: `已提交 ${submitted.length} 个任务（覆盖 ${rows.length} 个实例）`,
+      duration: 1500,
+    })
   }
   instTable.value?.clearSelection()
   setTimeout(() => load(true), 1000)

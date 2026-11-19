@@ -14,6 +14,9 @@ cluster.json
 webui/web/node_modules/
 webui/web/dist/
 
+# k8s-1 的本地二进制归档目录（黄区 PC 上会创建，绝不入库、不随部署下发）
+services/k8s-1-distribute-image/archives/
+
 # IDE / OS
 .idea/
 .vscode/

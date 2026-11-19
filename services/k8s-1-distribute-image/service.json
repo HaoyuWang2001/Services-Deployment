@@ -1,6 +1,6 @@
 {
   "name": "k8s-1-distribute-image",
-  "description": "从编译机copy镜像到k8s-controller，并发布镜像、加压组件至集群，加载主镜像、内存加压镜像和pause镜像",
+  "description": "从编译机copy镜像到k8s-controller，导入主镜像、memory-pressure 镜像（读取节点本地 tar，可由变量跳过）和 pause 镜像",
   "nodes": [
     "k8s-controller-2nodes",
     "k8s-controller-16nodes"
@@ -17,9 +17,10 @@
   },
   "deploy": {
     "files": [
-      "distribute-image.sh",
-      "archives/"
+      "distribute-image.sh"
     ]
   },
-  "variables": {}
+  "variables": {
+    "MEMORY_PRESSURE_TAR_PATH": ""
+  }
 }

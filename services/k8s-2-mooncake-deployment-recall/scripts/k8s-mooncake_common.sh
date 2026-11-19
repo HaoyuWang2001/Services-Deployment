@@ -187,7 +187,7 @@ export_ylt_env() {
     export MC_YLT_LOG_LEVEL=info
     export MC_YLT_LOG_PATH=./logs/ylt-rpc.log
     export MC_YLT_LOG_MAX_FILE_SIZE=5242880
-    export MC_YLT_LOG_MAX_FILES=1
+    export MC_YLT_LOG_MAX_FILES=3
 
     # 4) RPC 连接池 / 超时
     export MC_YLT_RPC_POOL_MAX_CONNECTION=16
