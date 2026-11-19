@@ -18,8 +18,7 @@
     "files": [
       "run-compile.sh",
       "stop-compile.sh",
-      "build-mooncake.sh",
-      "build-mooncake-with-kvtest.sh"
+      "build-mooncake.sh"
     ]
   },
   "variables": {

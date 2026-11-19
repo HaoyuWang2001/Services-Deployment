@@ -30,6 +30,7 @@ BIN_TARGETS=(
     "mooncake_master"
     "mooncake_client"
     "stress_cluster_bench"
+    "mooncake_kvtest"
 )
 SO_TARGETS=(
     "libasio.so"
@@ -86,6 +87,7 @@ cmake -B "${BUILD_DIR}" -S . -G Ninja \
   -DUSE_HTTP=ON \
   -DUSE_ETCD=ON \
   -DSTORE_USE_ETCD=ON \
+  -DUSE_TENT=OFF \
   -DWITH_TE=ON \
   -DWITH_STORE=ON \
   -DWITH_STORE_RUST=OFF \
@@ -133,7 +135,7 @@ echo ">> Build targets"
 export GOPROXY="http://mirrors.aliyun.com/goproxy,direct"
 export GOINSECURE="go.etcd.io/etcd"
 export GOSUMDB="sum.golang.org"
-cmake --build "${BUILD_DIR}" -j"$(nproc)" --target stress_cluster_bench mooncake_master mooncake_client engine store transfer_engine_bench
+cmake --build "${BUILD_DIR}" -j"$(nproc)" --target stress_cluster_bench mooncake_master mooncake_client engine store transfer_engine_bench mooncake_kvtest
 
 echo ">> Build python wheel"
 if [[ -n "${VENV}" ]]; then
@@ -155,6 +157,7 @@ echo ">> Copy binaries to ${OUTPUT_BIN_DIR}"
 mkdir -p "${OUTPUT_BIN_DIR}"
 cp -f \
   "${BUILD_DIR}/mooncake-store/benchmarks/stress_cluster_bench" \
+  "${BUILD_DIR}/mooncake-store/benchmarks/kvtest/mooncake_kvtest" \
   "${BUILD_DIR}/mooncake-store/src/mooncake_master" \
   "${BUILD_DIR}/mooncake-store/src/mooncake_client" \
   "${OUTPUT_BIN_DIR}/"
