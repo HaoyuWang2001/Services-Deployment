@@ -449,6 +449,8 @@ const selectableNodes = computed(() => {
 const blockReasons = computed(() => {
   const reasons = []
   if (dirty.value) reasons.push('有未保存的配置修改，请先保存或放弃')
+  if (cfg.value && !String(cfg.value.workspace || '').trim())
+    reasons.push('该服务未配置 workspace（仓库中留空），请先在「修改服务配置」中填写部署根目录')
   if (!nodes.value.length) reasons.push('集群无可用节点（cluster.json 未配置）')
   else if (cfg.value?.nodes?.length && !selectableNodes.value.length)
     reasons.push('目标节点白名单中的节点均不在当前集群中')
@@ -483,8 +485,9 @@ async function submit(action) {
       payload.args = args
     }
     const task = await api.createTask(payload)
+    // 提交成功后会立即返回 task；但其执行结果（成功/失败）由右下角任务通知统一反馈。
+    // 这里不再弹「任务已提交」toast，避免「提交成功」与「执行失败」两个弹窗同时出现。
     trackTask(task.id, `创建实例 ${name.value}`)
-    ElMessage.success(`任务已提交（${task.id}），进度可在「任务历史」查看`)
     setTimeout(() => loadInstances(true), 1000)
     setTimeout(() => loadInstances(true), 4000)
   } catch (e) {
