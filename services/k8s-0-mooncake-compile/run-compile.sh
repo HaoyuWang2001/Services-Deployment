@@ -66,8 +66,9 @@ ARTIFACT_DST="${ARTIFACT_DST:-}"      # 必填；STEP 0 校验非空
 CLEAN_BUILD="${CLEAN_BUILD:-true}"
 VENV="${VENV:-}"
 
-# 产物源目录——运行时推导（checkout 之后按实际短 commit 计算），此处仅声明
+# 产物源目录——运行时推导（编译完成后取编译脚本实际生成的那个目录），此处仅声明
 ARTIFACT_SRC=""
+ARTIFACT_DIR_NAME=""
 ACTUAL_COMMIT=""
 
 # 容器内 git 统一附加的配置：safe.directory=*（规避 root 与仓库属主不一致时的 dubious ownership）
@@ -252,10 +253,9 @@ echo ">> 已切到 HEAD: $(git rev-parse HEAD)  ($(git log -1 --format=%s))"
 '
 INFO "代码拉取完成"
 
-# 推导产物源目录：REPO_DIR/outputs/mooncake-<实际短commit>-aarch64-linux
+# 产物源目录在编译脚本执行后推导（见 STEP 6 之后），此处不再提前计算。
 ACTUAL_COMMIT="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --short HEAD)"
-ARTIFACT_SRC="${REPO_DIR}/outputs/mooncake-${ACTUAL_COMMIT}-aarch64-linux"
-INFO "产物源目录(推导): ${ARTIFACT_SRC}  (commit=${ACTUAL_COMMIT})"
+INFO "已 checkout 的 commit: ${ACTUAL_COMMIT}（产物目录名由编译脚本自行决定，编译后解析）"
 
 # ============================================================
 # STEP 4. 注入编译脚本（docker cp 进容器）
@@ -316,19 +316,52 @@ RC=$?
 INFO "编译脚本退出码: ${RC}"
 
 # ============================================================
+# 解析编译脚本实际生成的产物目录
+# ============================================================
+# 目录名由编译脚本自己决定（其内部按 git rev-parse --short HEAD 拼
+# mooncake-<commit>-<arch>），本服务不猜测，直接读取 ${REPO_DIR}/outputs
+# 下本次编译刚刚生成的 mooncake-* 目录。
+OUTPUTS_DIR="${REPO_DIR}/outputs"
+# 只认本次构建新产出的目录：按修改时间取最新的 mooncake-* 目录
+ARTIFACT_SRC="$(docker exec "${CONTAINER_NAME}" bash -c '
+set -euo pipefail
+d="$(ls -1dt "'"${OUTPUTS_DIR}"'"/mooncake-* 2>/dev/null | head -n1 || true)"
+[ -n "${d}" ] && echo "${d}"
+' 2>/dev/null || true)"
+
+if [[ -z "${ARTIFACT_SRC}" ]]; then
+    ERROR "未在 ${OUTPUTS_DIR} 找到产物目录 mooncake-*（编译脚本可能未产出）"
+    exit 1
+fi
+ARTIFACT_DIR_NAME="$(basename "${ARTIFACT_SRC}")"
+INFO "产物目录(编译脚本生成): ${ARTIFACT_SRC}"
+
+# ============================================================
 # STEP 7. 拷贝编译产物到容器外指定目录
 # ============================================================
-STEP "拷贝编译产物: ${CONTAINER_NAME}:${ARTIFACT_SRC}/. → ${ARTIFACT_DST}/ (host)"
+STEP "拷贝编译产物: ${CONTAINER_NAME}:${ARTIFACT_SRC} → ${ARTIFACT_DST}/ (host，保留目录层级)"
 
 docker exec "${CONTAINER_NAME}" test -d "${ARTIFACT_SRC}" \
     || { ERROR "容器内产物目录不存在: ${ARTIFACT_SRC}（请确认编译脚本输出位置）"; exit 1; }
 
+# 拷贝「整个 mooncake-<commit>-<arch> 目录」（不是其内容）：
+#   docker cp <容器>:<目录> <宿主目录>/  → 落地为 <宿主目录>/mooncake-<commit>-<arch>/{bin,lib,dist,...}
+# 注意不能写成 "${ARTIFACT_SRC}/."，那样会把 bin/lib/dist 直接摊平到 ARTIFACT_DST 下、丢掉版本目录层级。
 mkdir -p "${ARTIFACT_DST}"
-docker cp "${CONTAINER_NAME}:${ARTIFACT_SRC}/." "${ARTIFACT_DST}/"
-INFO "产物已拷出: ${ARTIFACT_DST}"
+rm -rf "${ARTIFACT_DST}/${ARTIFACT_DIR_NAME}"
+docker cp "${CONTAINER_NAME}:${ARTIFACT_SRC}" "${ARTIFACT_DST}/"
+
+HOST_ARTIFACT_DIR="${ARTIFACT_DST}/${ARTIFACT_DIR_NAME}"
+[[ -d "${HOST_ARTIFACT_DIR}" ]] \
+    || { ERROR "产物目录未按预期落地: ${HOST_ARTIFACT_DIR}"; exit 1; }
+INFO "产物已拷出: ${HOST_ARTIFACT_DIR}"
 {
     echo "[INFO] 产物清单（前 40 项）:"
-    ls -laR "${ARTIFACT_DST}" 2>/dev/null | head -n 40
+    ls -la "${HOST_ARTIFACT_DIR}" 2>/dev/null | head -n 20
+    for sub in bin lib dist; do
+        [[ -d "${HOST_ARTIFACT_DIR}/${sub}" ]] \
+            && echo "  ${sub}: $(ls -A "${HOST_ARTIFACT_DIR}/${sub}" | wc -l) 项"
+    done
 } || true
 
 # ============================================================
@@ -350,7 +383,7 @@ echo "  image       : ${FULL_IMAGE}"
 echo "  branch      : ${EFF_BRANCH}"
 echo "  commit      : ${EFF_COMMIT:-<latest>} (actual ${ACTUAL_COMMIT})"
 echo "  build script: ${SCRIPT_DEST_DIR}/${BUILD_SCRIPT}"
-echo "  artifacts   : ${ARTIFACT_DST} (host)"
+echo "  artifacts   : ${HOST_ARTIFACT_DIR:-${ARTIFACT_DST}} (host，含 ${ARTIFACT_DIR_NAME:-mooncake-<commit>-${ARCH}} 目录)"
 echo "  container   : ${CONTAINER_NAME} (已删除)"
 echo "============================================================"
 exit "${RC}"
