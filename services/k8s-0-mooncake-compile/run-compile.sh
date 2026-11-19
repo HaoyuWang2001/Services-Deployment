@@ -40,9 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ===================== 配置项（来自 service.json variables，可被任务覆盖） =====================
 
 # 本服务自行拉起/销毁的运行时容器名
-CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile-w00921547}"
+CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile}"
 
-REPO_DIR="${REPO_DIR:-/home/haoyu/Mooncake}"
+REPO_DIR="${REPO_DIR:-/workspace/Mooncake}"
 GIT_BRANCH="${GIT_BRANCH:-}"          # 空 → 使用容器内当前分支
 COMMIT_ID="${COMMIT_ID:-}"            # 空 → 使用分支最新提交（origin/<branch> tip）
 

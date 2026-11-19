@@ -10,7 +10,7 @@
 #
 set -euo pipefail
 
-CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile-w00921547}"
+CONTAINER_NAME="${CONTAINER_NAME:-mooncake-compile}"
 
 if docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1; then
     echo "[INFO] 编译容器 ${CONTAINER_NAME} 保留（复用模型，不停止、不删除）"

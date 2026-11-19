@@ -23,8 +23,8 @@
     ]
   },
   "variables": {
-    "CONTAINER_NAME": "mooncake-compile-w00921547",
-    "REPO_DIR": "/home/haoyu/Mooncake",
+    "CONTAINER_NAME": "mooncake-compile",
+    "REPO_DIR": "/workspace/Mooncake",
     "GIT_BRANCH": "",
     "COMMIT_ID": "",
     "BUILD_SCRIPT": "build-mooncake.sh",
