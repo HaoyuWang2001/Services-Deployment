@@ -1,6 +1,6 @@
 {
   "name": "k8s-0-mooncake-build-image",
-  "description": "从指定编译容器的产物目录（ARTIFACT_DIR，必填完整路径）流式直传到 runtime 容器，打包镜像（含 whl 安装与校验）并导出 tar",
+  "description": "从编译容器内产物根目录（ARTIFACT_DIR + COMMIT_ID 拼出 mooncake-<commit>-<arch>-linux）流式直传到 runtime 容器，打包镜像（含 whl 安装与校验）并导出 tar",
   "nodes": [],
   "workspace": "",
   "start": {
@@ -17,12 +17,12 @@
     ]
   },
   "variables": {
-    "COMMIT_ID": "",
-    "ARTIFACT_DIR": "",
     "COMPILE_CONTAINER": "mooncake-compile",
+    "ARTIFACT_DIR": "",
+    "COMMIT_ID": "",
+    "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
     "PROXY_IP": "",
     "PROXY_PORT": "3128",
-    "BASE_IMAGE": "mooncake-runtime-w00921547-base:latest",
     "TAR_OUTPUT_DIR": ""
   },
   "allow_duplicate_start": false

@@ -2,14 +2,15 @@
 #
 # Mooncake runtime 镜像构建与导出
 #
-# 前置（手动）：已在编译容器内完成 Mooncake 编译，并知道产物目录在容器内的
-# 【完整路径】，通过 ARTIFACT_DIR 显式传入（必填，禁止留空），例如：
-#   /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux
+# 前置（手动）：已在编译容器内完成 Mooncake 编译；产物目录名遵循 build-mooncake.sh
+# 的规范：mooncake-<COMMIT_ID>-<容器架构>-linux（架构由容器内 uname -m 得出，
+# 如 aarch64 / x86_64）。只需提供产物【根目录】ARTIFACT_DIR 与 COMMIT_ID。
 #
 # 流程（产物不落宿主机磁盘：编译容器 --docker 管道--> runtime 容器）：
-#   1. 预检（docker / COMMIT_ID 必填 / ARTIFACT_DIR 必填 / 编译容器运行中）
-#   2. 在编译容器内校验 ARTIFACT_DIR 存在且含 bin/lib/dist（失败即停，不触碰 runtime 容器）
-#   3. 以基础镜像新建 runtime 容器，并建好 bin/lib/dist 三个目录
+#   1. 预检（docker / COMMIT_ID / ARTIFACT_DIR 必填 / 编译容器运行中）
+#   2. 按 mooncake-<COMMIT_ID>-<arch>-linux 拼出产物目录；不存在时用
+#      mooncake-<COMMIT_ID>-*-linux 通配兜底（唯一命中采用）；再校验 bin/lib/dist
+#   3. 以基础镜像新建 runtime 容器（名称自动追加 -<COMMIT_ID>），并建好 bin/lib/dist
 #   4. docker cp 流式管道直传：编译容器产物 --(宿主机仅作内存流中转)-->
 #      runtime 容器 /home/Mooncake/outputs，原位置放回
 #   5. 在 runtime 容器内对照产物内容重建全部软链（绝对路径）并逐链接校验
@@ -26,18 +27,16 @@
 #
 # 环境变量（可被实例变量覆盖）：
 #   COMPILE_CONTAINER  (mooncake-compile)
-#   RUNTIME_CONTAINER  (mooncake-runtime-w00921547)
+#   ARTIFACT_DIR       【必填】编译容器内产物【根目录】（如 /home/Mooncake/outputs）；
+#                              产物目录 = <ARTIFACT_DIR>/mooncake-<COMMIT_ID>-<arch>-linux
+#   COMMIT_ID          【必填】产物目录名 + 镜像 TAG 的唯一依据
 #   BASE_IMAGE         (mooncake-runtime-w00921547-base:latest)
-#   IMAGE_NAME         (mooncake-runtime-w00921547)
-#   COMMIT_ID          【必填】镜像 TAG 中的 commitId
-#   ARTIFACT_DIR       【必填】编译容器内产物目录的完整路径（docker cp 源），
-#                              如 /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux
-#                              留空 → 预检直接报错退出
-#   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    runtime 容器内的产物落地根目录
-#                              （<MOONCAKE_OUTPUTS>/<ARTIFACT_DIR 的末级目录名>/bin|lib|dist）
-#   TAR_OUTPUT_DIR     【必填】tar 包导出目录（无默认值，未填则预检报错退出）
 #   PROXY_IP           (空 = 不使用代理)             pip 安装时的代理地址（常变，运行期传入）
 #   PROXY_PORT         (3128)
+#   TAR_OUTPUT_DIR     【必填】tar 包导出目录（无默认值，未填则预检报错退出）
+#   RUNTIME_CONTAINER  (mooncake-runtime-w00921547；运行时自动追加 -<COMMIT_ID>)
+#   IMAGE_NAME         (mooncake-runtime-w00921547；脚本内固定)
+#   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    runtime 容器内的产物落地根目录
 #   PIP_NO_PROXY       (192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
 #                       127.0.0.1,localhost,local,.local)
 #
@@ -46,19 +45,18 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 COMPILE_CONTAINER="${COMPILE_CONTAINER:-mooncake-compile}"
-RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
+ARTIFACT_DIR="${ARTIFACT_DIR:-}"            # 必填；产物根目录
+COMMIT_ID="${COMMIT_ID:-}"                  # 必填
 BASE_IMAGE="${BASE_IMAGE:-mooncake-runtime-w00921547-base:latest}"
-IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
-ARTIFACT_DIR="${ARTIFACT_DIR:-}"        # 必填；STEP 1 校验非空
-MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
-TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-}"   # 必填；STEP 1 校验非空
-CHECK_LDD="/home/check-mooncake-ldd.sh"
-CHECK_WHEEL="/home/check-mooncake-wheel.sh"
-
-# pip 安装代理（PROXY_IP 常变，运行期传入，不固化进基础镜像）
 PROXY_IP="${PROXY_IP:-}"
 PROXY_PORT="${PROXY_PORT:-3128}"
+TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-}"        # 必填
+RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
+IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
+MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
 PIP_NO_PROXY="${PIP_NO_PROXY:-192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,127.0.0.1,localhost,local,.local}"
+CHECK_LDD="/home/check-mooncake-ldd.sh"
+CHECK_WHEEL="/home/check-mooncake-wheel.sh"
 
 STEP_NO=0
 CURRENT_STEP=""
@@ -90,7 +88,6 @@ STEP "预检环境（docker / COMMIT_ID / ARTIFACT_DIR / 编译容器）"
 
 command -v docker >/dev/null 2>&1 || { ERROR "未找到 docker"; exit 1; }
 
-COMMIT_ID="${COMMIT_ID:-}"
 [[ -n "${COMMIT_ID}" ]] || {
     ERROR "COMMIT_ID 必须传入（创建实例时在「变量覆盖」中填写）"
     exit 1
@@ -102,29 +99,68 @@ COMMIT_ID="${COMMIT_ID:-}"
     exit 1
 }
 
-# ARTIFACT_DIR 必填：编译容器内产物目录的完整路径，禁止留空（不做任何猜测/推导）
+# ARTIFACT_DIR 必填：编译容器内的产物根目录（绝对路径）
 [[ -n "${ARTIFACT_DIR}" ]] || {
-    ERROR "ARTIFACT_DIR 必须传入（编译容器内产物目录的完整路径，如 /home/haoyu/Mooncake/outputs/mooncake-241db39f-x86_64-linux）"
+    ERROR "ARTIFACT_DIR 必须传入（编译容器内产物根目录，如 /home/Mooncake/outputs）"
     exit 1
 }
 [[ "${ARTIFACT_DIR}" == /* ]] || {
     ERROR "ARTIFACT_DIR 必须是容器内的绝对路径（当前：${ARTIFACT_DIR}）"
     exit 1
 }
-# 产物目录末级名，用于在 runtime 容器内落地成同名目录
-ARTIFACT_NAME="$(basename "${ARTIFACT_DIR}")"
-# 源：编译容器内的产物目录（ARTIFACT_DIR 原样）
-ARTIFACT_SRC_PATH="${ARTIFACT_DIR}"
-# 目标：runtime 容器内的落地目录（<MOONCAKE_OUTPUTS>/<ARTIFACT_NAME>）
-ARTIFACT_DEST_PATH="${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME}"
 
 [[ "$(docker inspect -f '{{.State.Running}}' "${COMPILE_CONTAINER}" 2>/dev/null || echo missing)" == "true" ]] \
     || { ERROR "编译容器未运行: ${COMPILE_CONTAINER}（请先手动完成编译）"; exit 1; }
 
+# runtime 容器名始终追加 -<COMMIT_ID>：同一 commit 重跑幂等、不同 commit 不冲突
+RUNTIME_CONTAINER="${RUNTIME_CONTAINER}-${COMMIT_ID}"
+
+# 与 build-mooncake.sh 相同的目录命名规范：mooncake-<COMMIT_ID>-<机器架构>-linux
+ARCH="$(docker exec "${COMPILE_CONTAINER}" uname -m)"
+[[ -n "${ARCH}" ]] || { ERROR "无法获取编译容器架构（docker exec uname -m 失败）"; exit 1; }
+
+ARTIFACT_NAME="mooncake-${COMMIT_ID}-${ARCH}-linux"
+ARTIFACT_SRC_PATH="${ARTIFACT_DIR}/${ARTIFACT_NAME}"
+ARTIFACT_DEST_PATH="${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME}"
+
+# 按规范拼出的目录不存在时，用 mooncake-<COMMIT_ID>-*-linux 通配兜底（唯一命中才采用）
+if ! docker exec "${COMPILE_CONTAINER}" test -d "${ARTIFACT_SRC_PATH}"; then
+    WARN "未找到按规范构造的产物目录: ${ARTIFACT_SRC_PATH}"
+    WARN "尝试在 ${ARTIFACT_DIR} 下按 mooncake-${COMMIT_ID}-*-linux 匹配..."
+    ENTRIES="$(docker exec "${COMPILE_CONTAINER}" ls -1 "${ARTIFACT_DIR}")" || {
+        ERROR "无法列出产物根目录: ${ARTIFACT_DIR}"
+        exit 1
+    }
+    MATCHES=()
+    while IFS= read -r entry; do
+        [[ -z "${entry}" ]] && continue
+        if [[ "${entry}" == "mooncake-${COMMIT_ID}-"*"-linux" ]]; then
+            MATCHES+=("${entry}")
+        fi
+    done <<< "${ENTRIES}"
+    case "${#MATCHES[@]}" in
+        0)
+            ERROR "未找到 commit ${COMMIT_ID} 的产物（${ARTIFACT_DIR}/mooncake-${COMMIT_ID}-*-linux）；请确认编译已完成且 COMMIT_ID 正确"
+            exit 1
+            ;;
+        1)
+            ARTIFACT_NAME="${MATCHES[0]}"
+            WARN "使用通配命中的产物目录: ${ARTIFACT_NAME}"
+            ARTIFACT_SRC_PATH="${ARTIFACT_DIR}/${ARTIFACT_NAME}"
+            ARTIFACT_DEST_PATH="${MOONCAKE_OUTPUTS}/${ARTIFACT_NAME}"
+            ;;
+        *)
+            ERROR "commit ${COMMIT_ID} 命中多个产物目录，无法唯一确定：${MATCHES[*]}"
+            exit 1
+            ;;
+    esac
+fi
+
 INFO "编译容器 : ${COMPILE_CONTAINER}"
 INFO "commit id : ${COMMIT_ID}"
-INFO "产物源   : ${COMPILE_CONTAINER}:${ARTIFACT_DIR}（编译容器内）"
-INFO "产物传输 : 编译容器 → runtime 容器（docker 管道，不落宿主机）"
+INFO "产物架构 : ${ARCH}"
+INFO "产物源   : ${COMPILE_CONTAINER}:${ARTIFACT_SRC_PATH}（编译容器内）"
+INFO "产物传输 : 编译容器 → ${RUNTIME_CONTAINER}（docker 管道，不落宿主机）"
 INFO "基础镜像 : ${BASE_IMAGE}"
 INFO "镜像名   : ${IMAGE_NAME}"
 INFO "tar 目录 : ${TAR_OUTPUT_DIR}"
@@ -153,7 +189,7 @@ done
 # ============================================================
 # STEP 3. 新建 runtime 容器（直传要求目标容器先存在）
 # ============================================================
-STEP "新建 runtime 容器并准备 bin/lib/dist 目录"
+STEP "新建 runtime 容器 ${RUNTIME_CONTAINER} 并准备 bin/lib/dist 目录"
 
 docker rm -f "${RUNTIME_CONTAINER}" >/dev/null 2>&1 || true
 docker run -d --name "${RUNTIME_CONTAINER}" --entrypoint /bin/sh \
@@ -323,6 +359,8 @@ echo
 echo "============================================================"
 echo "SUCCESS: Mooncake runtime 镜像构建完成"
 echo "  commit     : ${COMMIT_ID}"
+echo "  artifact   : ${ARTIFACT_DIR}/${ARTIFACT_NAME}"
+echo "  container  : ${RUNTIME_CONTAINER}（已清理）"
 echo "  image      : ${IMAGE_REF}"
 echo "  tar        : ${TAR_ABS} (${TAR_SIZE} bytes)"
 echo "============================================================"
