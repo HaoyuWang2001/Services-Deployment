@@ -106,7 +106,7 @@ exec numactl --physcpubind=27-34 --preferred=0 ${MOONCAKE_MASTER} \
   --ha_backend_type=etcd \
   --etcd_endpoints="141.61.84.151:17779" \
   --enable_ha=true \
-  --enable_oplog=true \
+  --enable_oplog=false \
   --rpc_address=$(ip a | grep -Eo '192\.168\.84\.[0-9]+' | head -n1) \
   --enable_metrics_report_to_backend=true \
   --enable_offload=false \
