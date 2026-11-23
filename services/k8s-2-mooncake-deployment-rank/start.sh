@@ -313,6 +313,24 @@ dump_unhealthy_pods() {
 }
 
 # ============================================================
+# 3d. 守卫：同名 Namespace 已存在则拒绝部署
+#
+# 不接管、不覆盖已有集群（可能是他人的部署，或上次残留）。
+# 失败时写 run/ns-foreign 标记：后端在 start.sh 退出后会自动执行 stop.sh，
+# stop.sh 见到该标记会跳过删除，防止把不属于本次部署的 Namespace 清理掉。
+# ============================================================
+
+if kubectl get namespace "${MOONCAKE_NAMESPACE}" >/dev/null 2>&1; then
+    ERROR "同名 Namespace 已存在，拒绝部署（不会接管/覆盖已有集群）: ${MOONCAKE_NAMESPACE}"
+    kubectl get namespace "${MOONCAKE_NAMESPACE}" \
+        -o jsonpath='creationTimestamp={.metadata.creationTimestamp}{"\n"}' 2>/dev/null || true
+    ERROR "请先停止/删除占用该 Namespace 的部署，或手动清理后重试"
+    mkdir -p "${SCRIPT_DIR}/run" && : > "${SCRIPT_DIR}/run/ns-foreign"
+    exit 2
+fi
+rm -f "${SCRIPT_DIR}/run/ns-foreign"
+
+# ============================================================
 # 4. Apply Namespace and startup-script ConfigMap
 # ============================================================
 

@@ -116,6 +116,14 @@ verify_cleanup() {
 ###############################################################################
 
 main() {
+    # 守卫：start.sh 因「同名 Namespace 属于其他部署」拒绝启动时留下该标记。
+    # 此时绝不能删除该 Namespace（可能是他人/别处的集群），直接跳过清理。
+    if [[ -f "${SCRIPT_DIR}/run/ns-foreign" ]]; then
+        WARN "检测到拒绝标记 run/ns-foreign：Namespace ${MOONCAKE_NAMESPACE} 不属于本次部署，跳过删除"
+        rm -f "${SCRIPT_DIR}/run/ns-foreign"
+        exit 0
+    fi
+
     INFO "=========================================="
     INFO "       Mooncake Kubernetes Stop"
     INFO "=========================================="
