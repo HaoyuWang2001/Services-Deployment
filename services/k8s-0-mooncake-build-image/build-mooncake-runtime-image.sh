@@ -36,9 +36,12 @@
 #   TAR_OUTPUT_DIR     【必填】tar 包导出目录（无默认值，未填则预检报错退出）
 #   RUNTIME_CONTAINER  (mooncake-runtime-w00921547；运行时自动追加 -<COMMIT_ID>)
 #   IMAGE_NAME         (mooncake-runtime-w00921547；脚本内固定)
-#   MOONCAKE_OUTPUTS   (/home/Mooncake/outputs)    runtime 容器内的产物落地根目录
 #   PIP_NO_PROXY       (192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
 #                       127.0.0.1,localhost,local,.local)
+#
+# 固定路径（不可覆盖）：runtime 容器内产物落地根始终为 /home/Mooncake/outputs，
+#   产物目录为 /home/Mooncake/outputs/mooncake-<COMMIT_ID>-<arch>-linux，
+#   并在该根下重建 bin/lib/dist 软链。
 #
 set -Eeuo pipefail
 
@@ -53,7 +56,8 @@ PROXY_PORT="${PROXY_PORT:-3128}"
 TAR_OUTPUT_DIR="${TAR_OUTPUT_DIR:-}"        # 必填
 RUNTIME_CONTAINER="${RUNTIME_CONTAINER:-mooncake-runtime-w00921547}"
 IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
-MOONCAKE_OUTPUTS="${MOONCAKE_OUTPUTS:-/home/Mooncake/outputs}"
+# runtime 容器内落地根：固定写死，忽略外部注入的同名变量（instance 变量覆盖也不生效）
+MOONCAKE_OUTPUTS="/home/Mooncake/outputs"
 PIP_NO_PROXY="${PIP_NO_PROXY:-192.168.0.0/16,141.0.0.0/8,10.0.0.0/8,172.16.0.0/12,127.0.0.1,localhost,local,.local}"
 CHECK_LDD="/home/check-mooncake-ldd.sh"
 CHECK_WHEEL="/home/check-mooncake-wheel.sh"
