@@ -49,7 +49,7 @@ LINK_DIST="${OUTPUT_DIR}/dist"
 
 mkdir -p run
 exec 9>run/build.lock
-flock -n 9 || { echo "BUILD_SKIPPED: 已有编译在运行"; exit 1; }
+flock -n 9 || { echo "BUILD_SKIPPED: 已有编译在运行（flock 被占用；可能为他人任务或上次残留）"; exit 3; }
 
 if [[ "${CLEAN_BUILD}" == "true" && -d "${BUILD_DIR}" ]]; then
     echo "[INFO] Clean build directory: ${BUILD_DIR}"

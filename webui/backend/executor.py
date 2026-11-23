@@ -58,9 +58,11 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     script = shlex.quote(service.start.script)
     effective_args = list(args) if args is not None else list(service.start.args)
     args = " ".join(shlex.quote(str(a)) for a in effective_args)
-    env = ""
-    if variables:
-        env = "env " + " ".join(f"{k}={shlex.quote(str(v))}" for k, v in variables.items()) + " "
+    # SD_RUN_ID 同时注入实例环境：服务脚本据此生成「本实例编译进程」的标识，
+    # stop 时用于精确识别自己的进程（绝不按进程名误杀他人进程）。
+    env_pairs = [f"SD_RUN_ID={shlex.quote(run_id)}"]
+    env_pairs += [f"{k}={shlex.quote(str(v))}" for k, v in variables.items()]
+    env = "env " + " ".join(env_pairs) + " "
     logdir = f"logs/{run_id}"
     logfile = f"{logdir}/{service.start.log}"
     pidfile = f"run/{service.name}.pid"
@@ -73,7 +75,7 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
         auto_cleanup = (
             f'echo "===== [$(date \'+%F %T\')] 自动清理 (stop.sh) =====" >> {qlog}; '
             f'echo "\\$ bash {stop_script}" >> {qlog}; '
-            f'cout=$(bash {stop_script} 2>&1); crc=$?; '
+            f'cout=$(SD_RUN_ID={shlex.quote(run_id)} bash {stop_script} 2>&1); crc=$?; '
             f'printf \'%s\\n\' "$cout" >> {qlog}; '
             f'printf \'[stop.sh 退出码=%s]\\n\' "$crc" >> {qlog}; '
             f'echo $crc > {qcc}; echo "[$(date \'+%F %T\')] $crc" >> {qcch}; '
@@ -153,12 +155,19 @@ def build_kill_stop_command(service: ServiceConfig, logfile: Optional[str] = Non
 
 
 def build_stop_script_command(service: ServiceConfig,
-                              variables: dict[str, str] | None = None) -> str:
-    """停止脚本命令；注入变量（实例快照）与启动时的环境保持一致。"""
+                              variables: dict[str, str] | None = None,
+                              run_id: Optional[str] = None) -> str:
+    """停止脚本命令；注入变量（实例快照）与 SD_RUN_ID，与启动时的环境保持一致。
+
+    SD_RUN_ID 使 stop 脚本能定位「该实例启动的编译进程」并精确清理。
+    """
     ws = shell_ws(service.workspace)
-    env = ""
+    pairs: list[str] = []
+    if run_id:
+        pairs.append(f"SD_RUN_ID={shlex.quote(run_id)}")
     if variables:
-        env = "env " + " ".join(f"{k}={shlex.quote(str(v))}" for k, v in variables.items()) + " "
+        pairs += [f"{k}={shlex.quote(str(v))}" for k, v in variables.items()]
+    env = ("env " + " ".join(pairs) + " ") if pairs else ""
     return f"cd {ws} && {env}bash {shlex.quote(service.stop.script)}"
 
 
@@ -494,7 +503,7 @@ async def stop_service(pool: SSHPool, node: Node, service: ServiceConfig,
             code_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_code")
             codes_ref = shell_ws(f"{service.workspace}/logs/{run_id}/cleanup_codes.log")
         try:
-            res = await pool.run(node, wrap(build_stop_script_command(service, variables), hint=hint,
+            res = await pool.run(node, wrap(build_stop_script_command(service, variables, run_id=run_id), hint=hint,
                                             code_ref=code_ref, codes_ref=codes_ref),
                                  timeout=STOP_SCRIPT_TIMEOUT)
         except SSHError as e:

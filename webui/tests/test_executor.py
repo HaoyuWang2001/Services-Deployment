@@ -39,7 +39,7 @@ def test_start_command_structure():
     assert "cd /data/mooncake/master" in cmd
     assert "mkdir -p logs/20261025-120000 run" in cmd
     # setsid 独立进程组 + 指纹写入 pid 文件
-    assert "setsid nohup env MASTER_PORT=2379 bash -c " in cmd
+    assert "setsid nohup env SD_RUN_ID=20261025-120000 MASTER_PORT=2379 bash -c " in cmd
     # 续写模式：分隔符行 + >> 追加重定向
     assert "实例启动 =====" in cmd
     assert '>> logs/20261025-120000/master.log;' in cmd
@@ -62,17 +62,20 @@ def test_start_command_tilde_workspace_unquoted():
     assert "cd '~/mc'" not in cmd
 
 
-def test_start_command_no_env():
+def test_start_command_only_run_id_env():
+    """无业务变量时，仍注入且仅注入 SD_RUN_ID（供 stop 精确定位本实例编译进程）。"""
     svc = make_svc()
     cmd = build_start_command(svc, "r1", {})
-    assert "setsid nohup bash -c " in cmd
-    assert "env " not in cmd.split("bash -c")[0].split("nohup")[-1]
+    assert "setsid nohup env SD_RUN_ID=r1 bash -c " in cmd
+    env_part = cmd.split("bash -c")[0].split("nohup")[-1]
+    assert "SD_RUN_ID=r1" in env_part
+    assert "MASTER_PORT" not in env_part
 
 
 def test_start_command_special_chars_in_var():
     svc = make_svc()
     cmd = build_start_command(svc, "r1", {"TOKEN": "a b'c"})
-    assert "env TOKEN='a b'\"'\"'c'" in cmd
+    assert "env SD_RUN_ID=r1 TOKEN='a b'\"'\"'c'" in cmd
 
 
 def test_start_command_args_override_and_hint():
@@ -97,7 +100,7 @@ def test_start_command_auto_cleanup_when_stop_script():
     cmd = build_start_command(svc, "r1", {})
     assert "自动清理 (stop.sh) =====" in cmd          # 清理分隔符
     assert "bash stop.sh 2>&1" in cmd                  # 自动执行 stop.sh
-    assert "cout=$(bash stop.sh 2>&1); crc=$?" in cmd
+    assert "cout=$(SD_RUN_ID=r1 bash stop.sh 2>&1); crc=$?" in cmd
     assert "[stop.sh 退出码=%s]" in cmd                # 记录 stop.sh 退出码
     assert "exit $rc" in cmd                           # 实例退出码不受 stop.sh 影响
 
@@ -171,6 +174,15 @@ def test_stop_script_timeout_exceeds_namespace_cleanup_timeout():
 
     assert pool.timeouts[-1] == STOP_SCRIPT_TIMEOUT
     assert STOP_SCRIPT_TIMEOUT > 180
+
+
+def test_stop_script_command_injects_run_id():
+    """手动停止时注入 SD_RUN_ID，使 stop 能精确定位本实例的编译进程。"""
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 3})
+    cmd = build_stop_script_command(svc, None, run_id="r1")
+    assert cmd == "cd /data/mooncake/master && env SD_RUN_ID=r1 bash stop.sh"
+    cmd2 = build_stop_script_command(svc, {"A": "1"}, run_id="r1")
+    assert cmd2 == "cd /data/mooncake/master && env SD_RUN_ID=r1 A=1 bash stop.sh"
 
 
 def test_stop_script_command_with_variables():

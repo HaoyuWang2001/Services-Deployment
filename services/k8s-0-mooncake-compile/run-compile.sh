@@ -19,7 +19,10 @@
 #   8. 容器保留（不删除，供下次复用）
 #   9. 汇总
 #
-# 失败语义：任一步失败 → 非零退出；容器始终保留，便于排查与复用。
+# 失败语义：
+#   - 编译脚本失败 → 非零退出；容器始终保留，便于排查与复用。
+#   - 容器内已有编译进程（他人任务/上次残留）→ 退出码 3（BUILD_SKIPPED），本次不启动。
+#   - 停止：stop-compile.sh 按本实例 token 精确终止容器内编译进程树，绝不误杀他人进程。
 #
 # 说明：
 #   - 编译脚本随服务一起部署到服务目录（与 run-compile.sh 同目录，即 SCRIPT_DIR），
@@ -63,6 +66,12 @@ PULL_PROXY_FLAGS=()
 CLEAN_BUILD="${CLEAN_BUILD:-false}"
 VENV="${VENV:-}"
 
+# 本实例编译进程标识（按实例/run_id 生成）：注入到容器内编译进程的环境变量，
+# stop 时据此精确识别「本服务本实例启动的」进程；他人进程没有该 token，绝不动。
+SERVICE_ID="$(basename "${SCRIPT_DIR}")"
+INSTANCE_TOKEN="sdcompile:${SERVICE_ID}:${SD_RUN_ID:-$(date '+%Y%m%d%H%M%S')-$$}"
+TOKEN_FILE="${SCRIPT_DIR}/run/compile.token"
+
 ACTUAL_COMMIT=""
 
 # 容器内 git 统一附加的配置：safe.directory=*（规避 root 与仓库属主不一致时的 dubious ownership）
@@ -86,7 +95,11 @@ ERROR() { echo "[ERROR $(date '+%F %T')] $*" >&2; }
 
 on_error() {
     local rc=$?
-    ERROR "编译编排失败（rc=${rc}${CURRENT_STEP:+，步骤：${CURRENT_STEP}}）"
+    if [[ "${rc}" -eq 3 ]]; then
+        ERROR "BUILD_SKIPPED (rc=3)：容器内已有编译在运行，本次未启动编译"
+    else
+        ERROR "编译编排失败（rc=${rc}${CURRENT_STEP:+，步骤：${CURRENT_STEP}}）"
+    fi
     # 容器由外部启动、本服务只借用，失败时保留原样（不 stop、不删除），便于排查与复用
     WARN "容器已保留（未删除）: ${CONTAINER_NAME}"
     exit "$rc"
@@ -267,10 +280,42 @@ prepare_build_env
 # ============================================================
 STEP "执行编译脚本（日志进入服务日志，可实时监视）"
 
+# ---- 互斥检查：容器内是否已有编译进程（他人任务 / 上次未清理的残留）----
+# 只检测、不杀；退出码 3 表示「本次未启动编译」，与「编译失败(1)」区分。
+if docker exec "${CONTAINER_NAME}" sh -c 'command -v pgrep >/dev/null 2>&1'; then
+    RUNNING_PIDS="$(docker exec "${CONTAINER_NAME}" pgrep -f "${BUILD_SCRIPT}" 2>/dev/null || true)"
+else
+    # 无 pgrep 时回退到 /proc 扫描（排除自身 pid 与 pid 1）
+    RUNNING_PIDS="$(docker exec "${CONTAINER_NAME}" sh -c '
+name="$1"
+for p in /proc/[0-9]*; do
+    pid=${p#/proc/}
+    [ "$pid" = "$$" ] && continue
+    [ "$pid" = "1" ] && continue
+    cmd=$(tr "\0" " " 2>/dev/null < "$p/cmdline" || true)
+    case "$cmd" in *"$name"*) echo "$pid";; esac
+done' sh "${BUILD_SCRIPT}" 2>/dev/null || true)"
+fi
+if [[ -n "${RUNNING_PIDS//[[:space:]]/}" ]]; then
+    ERROR "BUILD_SKIPPED: 容器内已有 ${BUILD_SCRIPT} 进程在运行（本次不启动编译）"
+    ERROR "  容器: ${CONTAINER_NAME}"
+    ERROR "  占用 pid: $(printf '%s' "${RUNNING_PIDS}" | tr '\n' ' ')"
+    ERROR "  常见原因：上一次编译未被清理，或他人正在同一容器内并行编译。"
+    ERROR "  本服务不会杀掉非本实例的进程；若确认是本服务上次残留，请对该实例执行「停止」。"
+    exit 3
+fi
+INFO "互斥检查通过：容器内无 ${BUILD_SCRIPT} 进程"
+
+# 记录本实例 token（供 stop 在宿主机侧兜底识别；正常路径由 SD_RUN_ID 精确匹配）
+mkdir -p "${SCRIPT_DIR}/run"
+printf '%s\n' "${INSTANCE_TOKEN}" > "${TOKEN_FILE}"
+
 # 进入容器执行：先 source build.env（含 FREQ_VARS），再运行编译脚本。
+# SD_COMPILE_TOKEN 会进入该进程树的环境，stop 时按 /proc/<pid>/environ 精确匹配。
 docker exec \
     -e "CONTAINER_SCRIPT_DIR=${CONTAINER_SCRIPT_DIR}" \
     -e "BUILD_SCRIPT=${BUILD_SCRIPT}" \
+    -e "SD_COMPILE_TOKEN=${INSTANCE_TOKEN}" \
     "${CONTAINER_NAME}" bash -c '
 set -euo pipefail
 cd "${CONTAINER_SCRIPT_DIR}"
