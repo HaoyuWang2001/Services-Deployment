@@ -30,6 +30,7 @@
   },
   "variables": {
     "TAG": "latest",
-    "MOONCAKE_NAMESPACE": "mooncake-recall"
+    "MOONCAKE_NAMESPACE": "mooncake-recall",
+    "STORE_PER_NODE": "2"
   }
 }

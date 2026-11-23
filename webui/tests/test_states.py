@@ -54,10 +54,11 @@ def test_gating_sets():
     # deploying/degraded 为心跳派生态，进程存活 → 与 running 同门禁（不可启动）
     assert set(CAN_STOP) == {"running", "abnormal", "completed", "degraded", "deploying"}
     assert set(CAN_START) == {"created", "stopped", "completed", "notdeployed"}
+    # 重启 = 链接 停止→启动（running 及心跳派生态）
     assert set(CAN_RESTART) == {"running", "degraded", "deploying"}
+    # running / abnormal / degraded / deploying 允许删除（都会链接 停止→删除）
     assert set(CAN_DELETE) == {"created", "stopped", "completed", "notdeployed",
-                               "running", "degraded", "deploying"}
-    assert "abnormal" not in CAN_DELETE
+                               "running", "abnormal", "degraded", "deploying"}
     for t in TRANSIENT_STATES:
         assert t not in CAN_STOP and t not in CAN_START and t not in CAN_DELETE
         assert t not in CAN_RESTART

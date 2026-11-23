@@ -113,12 +113,17 @@ export MC_STORE_CLIENT_METRIC_INTERVAL=3
 export MC_URMA_BONDING_MULTIPATH_ENABLE=on
 export MC_UB_NUMA_AFFINITY_ENABLE=on
 export MC_URMA_SET_BONDING_MODE=on
+export MC_URMA_BONDING_MODE=BALANCE
+export MC_URMA_BONDING_LEVEL=PORT
+
+export MC_USE_TENT=1
+export MC_TENT_CONF="{\"transports\":{\"ub\":{\"enable\":true,\"device_filter\":\"${URMA_DEVICE}\",\"slice_size\":1048576,\"worker_count\":2}}}"
 
 export MOONCAKE_OFFLOAD_FILE_STORAGE_PATH=/home/mooncake-data
 export MOONCAKE_OFFLOAD_BUCKET_KEYS_LIMIT=1
 export MOONCAKE_OFFLOAD_CLIENT_BUFFER_GC_TTL_MS=60000
 
-export MC_UB_NUMA_NODES=0
+#export MC_UB_NUMA_NODES=0
 
 export MC_URMA_TE_PRIORITY=6
 

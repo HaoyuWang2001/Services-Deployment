@@ -315,6 +315,13 @@ STEP "执行 ${CHECK_WHEEL}"
 
 docker exec "${RUNTIME_CONTAINER}" test -f "${CHECK_WHEEL}" \
     || { ERROR "校验脚本不存在: ${CHECK_WHEEL}"; exit 1; }
+# 基础镜像的检查脚本仍固定旧 wheel 版本；本次产物预期为 0.3.14。
+# 只替换已知的旧值，并确认替换成功，避免意外跳过版本校验。
+docker exec "${RUNTIME_CONTAINER}" sed -i \
+    's/^EXPECTED_VERSION="0\.3\.12\.post1"$/EXPECTED_VERSION="0.3.14"/' \
+    "${CHECK_WHEEL}"
+docker exec "${RUNTIME_CONTAINER}" grep -qx 'EXPECTED_VERSION="0.3.14"' "${CHECK_WHEEL}" \
+    || { ERROR "wheel 校验脚本版本配置不符合预期: ${CHECK_WHEEL}"; exit 1; }
 docker exec "${RUNTIME_CONTAINER}" bash "${CHECK_WHEEL}"
 
 # ============================================================

@@ -36,7 +36,8 @@ CAN_STOP = ("running", "abnormal", "completed", "degraded", "deploying")
 CAN_START = ("created", "stopped", "completed", "notdeployed")
 CAN_RESTART = ("running", "degraded", "deploying")  # 重启 = 链接 停止→启动
 CAN_DELETE = ("created", "stopped", "completed", "notdeployed",
-              "running", "degraded", "deploying")  # running = 链接 停止→删除
+              "running", "degraded", "deploying", "abnormal")
+# running / degraded / deploying / abnormal = 链接完整的停止清理后再删除
 
 
 def _now_iso() -> str:
@@ -233,6 +234,28 @@ class InstanceRegistry:
             return
         inst.stop_result = result
         self._save()
+
+    def recover_interrupted_transients(self) -> int:
+        """Recover states left transient when the backend process was interrupted.
+
+        No lifecycle task survives a backend restart.  Treat the instance as
+        running first; the next probe will immediately reconcile a dead process
+        to ``abnormal``/``exited`` while keeping every operation retryable.
+        deleting（停止管线已成功，仅记录移除被中断）→ 补完注销，
+        与 resolve_transient 的 TTL 收敛语义一致。
+        """
+        recovered = 0
+        for key, inst in list(self._items.items()):
+            if inst.state not in TRANSIENT_STATES:
+                continue
+            if inst.state == "deleting":
+                self.unregister(*key)
+            else:
+                inst.state = "running"
+            recovered += 1
+        if recovered:
+            self._save()
+        return recovered
 
     def set_variables(self, service: str, node: str, variables: dict[str, str]) -> None:
         """更新实例的变量快照（显式携带变量的启动合并后调用）。"""
