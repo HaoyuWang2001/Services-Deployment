@@ -22,16 +22,30 @@ export PATH="/usr/local/go/bin:${PATH}"
 VENV=""
 VENV_PIP="$( [[ -n "${VENV:-}" ]] && printf '%s' "${VENV}/bin/pip" || printf 'pip' )"
 
+# ===== 功能开关（来自 service.json variables / 任务注入；1/true/on/yes = 开）=====
+# ENABLE_TENT:   TENT 传输后端（cmake -DUSE_TENT + libtent_metrics.so 进 outputs/lib
+#                + wheel 步骤前把 tent metrics 目录加入 LD_LIBRARY_PATH 供 auditwheel 解析）
+# ENABLE_KVTEST: mooncake_kvtest 基准二进制（构建目标 + outputs/bin 拷贝）
+ENABLE_KVTEST="${ENABLE_KVTEST:-1}"
+ENABLE_TENT="${ENABLE_TENT:-1}"
+is_on() { [[ "${1}" =~ ^(1|true|on|yes|ON|True|TRUE|Yes|YES)$ ]]; }
+
 BIN_TARGETS=(
     "mooncake_master"
     "mooncake_client"
     "stress_cluster_bench"
-    "mooncake_kvtest"
 )
 SO_TARGETS=(
     "libasio.so"
     "libetcd_wrapper.so"
 )
+if is_on "${ENABLE_KVTEST}"; then
+    BIN_TARGETS+=("mooncake_kvtest")
+fi
+if is_on "${ENABLE_TENT}"; then
+    SO_TARGETS+=("libtent_metrics.so")
+fi
+echo "[INFO] ENABLE_TENT=${ENABLE_TENT} ENABLE_KVTEST=${ENABLE_KVTEST}"
 
 # ===================== 编译 Mooncake =====================
 echo ">> Enter source root: ${SRC_ROOT}"
@@ -105,6 +119,12 @@ fi
 # 加速相关选项（参考 ssh-0-mooncake-compile）：
 #   -DCMAKE_BUILD_TYPE=Release        -O3（RelWithDebInfo 为 -O2 -g），实测快 3-5%
 #   -DENABLE_DEBUG_SYMBOLS=OFF        关掉 common.cmake 强加的 -g，去符号省编译时间/内存/.o 体积
+# TENT 开关 → cmake 参数（关时不传，上游默认 USE_TENT=OFF）
+TENT_ARGS=()
+if is_on "${ENABLE_TENT}"; then
+    TENT_ARGS=(-DUSE_TENT=ON)
+fi
+
 cmake -B "${BUILD_DIR}" -S . ${GEN_ARGS} ${CCACHE_ARGS} \
   -DUSE_UB=ON \
   -DUSE_CUDA=OFF \
@@ -112,7 +132,7 @@ cmake -B "${BUILD_DIR}" -S . ${GEN_ARGS} ${CCACHE_ARGS} \
   -DUSE_HTTP=ON \
   -DUSE_ETCD=ON \
   -DSTORE_USE_ETCD=ON \
-  -DUSE_TENT=ON \
+  "${TENT_ARGS[@]}" \
   -DWITH_TE=ON \
   -DWITH_STORE=ON \
   -DWITH_STORE_RUST=OFF \
@@ -138,9 +158,19 @@ echo ">> Build targets"
 export GOPROXY="http://mirrors.aliyun.com/goproxy,direct"
 export GOINSECURE="go.etcd.io/etcd"
 export GOSUMDB="sum.golang.org"
-cmake --build "${BUILD_DIR}" -j"$(nproc)" --target mooncake_master mooncake_client engine store transfer_engine_bench stress_cluster_bench mooncake_kvtest
+BUILD_TARGETS=(mooncake_master mooncake_client engine store transfer_engine_bench stress_cluster_bench)
+if is_on "${ENABLE_KVTEST}"; then
+    BUILD_TARGETS+=(mooncake_kvtest)
+fi
+cmake --build "${BUILD_DIR}" -j"$(nproc)" --target "${BUILD_TARGETS[@]}"
 
 echo ">> Build python wheel"
+# TENT 构建时让 auditwheel 能解析 libtent_metrics.so：wheel 打包脚本按 RPATH/LD_LIBRARY_PATH
+# 定位依赖库，libasio/libetcd_wrapper 已由脚本自身 LD_LIBRARY_PATH 覆盖，tent metrics 目录需在此补上
+if is_on "${ENABLE_TENT}"; then
+    export LD_LIBRARY_PATH="${BUILD_DIR}/mooncake-transfer-engine/tent/src/metrics:${LD_LIBRARY_PATH:-}"
+    echo "[INFO] LD_LIBRARY_PATH 已加入 tent metrics 目录（auditwheel 解析 libtent_metrics.so）"
+fi
 if [[ -n "${VENV}" ]]; then
     if [[ ! -f "${VENV}/bin/activate" ]]; then
         echo "ERROR: Python virtual environment not found: ${VENV}" >&2
@@ -161,14 +191,24 @@ cp -f \
   "${BUILD_DIR}/mooncake-store/src/mooncake_master" \
   "${BUILD_DIR}/mooncake-store/src/mooncake_client" \
   "${BUILD_DIR}/mooncake-store/benchmarks/stress_cluster_bench" \
-  "${BUILD_DIR}/mooncake-store/benchmarks/kvtest/mooncake_kvtest" \
   "${OUTPUT_BIN_DIR}/"
+if is_on "${ENABLE_KVTEST}"; then
+    cp -f "${BUILD_DIR}/mooncake-store/benchmarks/kvtest/mooncake_kvtest" "${OUTPUT_BIN_DIR}/"
+fi
 
 mkdir -p "${OUTPUT_LIB_DIR}"
 cp -f \
   "${BUILD_DIR}/mooncake-common/libasio.so" \
   "${BUILD_DIR}/mooncake-common/etcd/libetcd_wrapper.so" \
   "${OUTPUT_LIB_DIR}/"
+if is_on "${ENABLE_TENT}"; then
+    cp -f "${BUILD_DIR}/mooncake-transfer-engine/tent/src/metrics/libtent_metrics.so" "${OUTPUT_LIB_DIR}/"
+fi
+# 运行期 engine.so/client 等需要 libhiredis.so.1.1.0；部分运行环境系统库不带该版本，
+# 沿用成熟编译脚本的做法随产物分发（存在才拷，-L 解符号链接到真实库）
+if [[ -f /usr/lib64/libhiredis.so ]]; then
+    cp -L /usr/lib64/libhiredis.so "${OUTPUT_LIB_DIR}/libhiredis.so.1.1.0"
+fi
 
 mkdir -p "${OUTPUT_DIST_DIR}"
 cp -f \

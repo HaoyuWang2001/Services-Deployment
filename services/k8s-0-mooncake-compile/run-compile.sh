@@ -65,6 +65,9 @@ PULL_PROXY_FLAGS=()
 # 注入编译脚本的环境变量（FREQ_VARS）
 CLEAN_BUILD="${CLEAN_BUILD:-false}"
 VENV="${VENV:-}"
+# 功能开关：编译脚本按这两个开关控制 TENT 后端与 kvtest 基准（默认开，任务可覆盖为 0）
+ENABLE_KVTEST="${ENABLE_KVTEST:-1}"
+ENABLE_TENT="${ENABLE_TENT:-1}"
 
 # 本实例编译进程标识（按实例/run_id 生成）：注入到容器内编译进程的环境变量，
 # stop 时据此精确识别「本服务本实例启动的」进程；他人进程没有该 token，绝不动。
@@ -290,12 +293,14 @@ prepare_build_env() {
         echo "export SRC_ROOT='${REPO_DIR}'"
         echo "export CLEAN_BUILD='${CLEAN_BUILD}'"
         echo "export VENV='${VENV}'"
+        echo "export ENABLE_KVTEST='${ENABLE_KVTEST}'"
+        echo "export ENABLE_TENT='${ENABLE_TENT}'"
         if [[ -n "${PROXY_IP}" ]]; then
             echo "export PROXY_IP='${PROXY_IP}'"
             echo "export PROXY_PORT='${PROXY_PORT}'"
         fi
     } | docker exec -i "${CONTAINER_NAME}" bash -c "cat > '${env_path}'"
-    INFO "build.env 已写入(容器内) ${env_path}（SRC_ROOT/CLEAN_BUILD/VENV${PROXY_IP:+ +PROXY_IP/PROXY_PORT}）"
+    INFO "build.env 已写入(容器内) ${env_path}（SRC_ROOT/CLEAN_BUILD/VENV/ENABLE_KVTEST/ENABLE_TENT${PROXY_IP:+ +PROXY_IP/PROXY_PORT}）"
 }
 prepare_build_env
 
