@@ -21,6 +21,7 @@
     ]
   },
   "variables": {
+    "REMOTE_IMAGE_DIR": "/home/w00921547/downloads",
     "MEMORY_PRESSURE_TAR_PATH": ""
   }
 }
