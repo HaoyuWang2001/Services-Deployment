@@ -29,6 +29,7 @@
     ]
   },
   "variables": {
+    "IMAGE_NAME": "mooncake-runtime-w00921547",
     "TAG": "latest",
     "MOONCAKE_NAMESPACE": "mooncake-rank"
   }

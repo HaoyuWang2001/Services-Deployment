@@ -35,7 +35,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
 
 export MOONCAKE_NAMESPACE="${MOONCAKE_NAMESPACE:-mooncake-rank}"
-export MOONCAKE_IMAGE="${MOONCAKE_IMAGE:-mooncake-runtime-w00921547:${TAG:-latest}}"
+export IMAGE_NAME="${IMAGE_NAME:-mooncake-runtime-w00921547}"
+export MOONCAKE_IMAGE="${MOONCAKE_IMAGE:-${IMAGE_NAME}:${TAG:-latest}}"
 export MOONCAKE_LOG_PATH="${MOONCAKE_LOG_PATH:-/home/w00921547/mooncake-logs/rank}"
 export MOONCAKE_SCRIPT_CONFIGMAP="${MOONCAKE_SCRIPT_CONFIGMAP:-mooncake-startup-scripts}"
 
