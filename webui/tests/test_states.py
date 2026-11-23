@@ -95,3 +95,16 @@ def test_cleanup_display():
     assert cleanup_display("stopped", "killfail", None) == "killfail"
     assert cleanup_display("stopped", "none", 0) == "ok"
     assert cleanup_display("stopped", "none", None) == "unclean"
+
+
+def test_cleanup_display_without_stop_script():
+    # 未配置 stop.sh：终止态统一「无需清理」（notneeded）
+    assert cleanup_display("completed", "none", None, has_stop_script=False) == "notneeded"
+    assert cleanup_display("abnormal", "none", None, has_stop_script=False) == "notneeded"
+    assert cleanup_display("stopped", "none", 0, has_stop_script=False) == "notneeded"
+    # 活跃态与人工停止记录语义不变
+    assert cleanup_display("running", "none", None, has_stop_script=False) == "none"
+    assert cleanup_display("stopped", "ok", None, has_stop_script=False) == "ok"
+    # 有脚本时行为不变
+    assert cleanup_display("completed", "none", 0, has_stop_script=True) == "ok"
+    assert cleanup_display("completed", "none", None, has_stop_script=True) == "unclean"

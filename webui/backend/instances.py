@@ -119,10 +119,11 @@ def reconcile(reg_state: str, probe: str, exit_code: Optional[int],
 
 
 def cleanup_display(display_state: str, stop_result: str,
-                    cleanup_code: Optional[int]) -> str:
+                    cleanup_code: Optional[int],
+                    has_stop_script: bool = True) -> str:
     """展示状态 + 手动停止结果 + 节点 cleanup_code → 清理状态列取值。
 
-    返回：none / running / ok / failed:N / killfail / unclean
+    返回：none / running / ok / failed:N / killfail / unclean / notneeded
     """
     if display_state == "stopping":
         return "running"  # 执行中
@@ -131,6 +132,9 @@ def cleanup_display(display_state: str, stop_result: str,
         return "none"
     if display_state == "stopped" and stop_result not in ("none", ""):
         return stop_result  # ok / failed:N / killfail
+    # 服务未配置 stop.sh：终止后没有任何清理动作，标记为「无需清理」
+    if not has_stop_script:
+        return "notneeded"
     # completed / abnormal / stopped(无手动记录) → 依节点最近一次 stop.sh 退出码
     if cleanup_code is None:
         return "unclean"
@@ -352,7 +356,8 @@ class InstanceRegistry:
             d["probe_pid"] = st.pid
             d["deploy_state"] = st.deploy_state if display in ("deploying", "degraded") else None
             d["exit_code"] = st.exit_code if display in ("completed", "abnormal") else None
-            d["cleanup_status"] = cleanup_display(display, inst.stop_result, st.cleanup_code)
+            d["cleanup_status"] = cleanup_display(display, inst.stop_result, st.cleanup_code,
+                                              has_stop_script=bool(svc.stop.script))
             return d
 
         return list(await asyncio.gather(*(_probe(i) for i in items)))

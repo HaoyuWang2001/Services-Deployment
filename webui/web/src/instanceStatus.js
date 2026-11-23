@@ -52,6 +52,7 @@ const CLEANUP_TYPE = {
   ok: 'success',
   killfail: 'danger',
   unclean: 'info',
+  notneeded: 'success',
 }
 
 export function cleanupType(c) {
@@ -66,6 +67,7 @@ export function cleanupText(c) {
   if (c.startsWith('failed:')) return `清理失败（${c.slice(7)}）`
   if (c === 'killfail') return '停止失败'
   if (c === 'unclean') return '未清理'
+  if (c === 'notneeded') return '无需清理'
   return c
 }
 
