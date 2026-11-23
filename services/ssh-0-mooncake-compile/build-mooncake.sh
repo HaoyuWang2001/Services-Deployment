@@ -87,7 +87,7 @@ cmake -B "${BUILD_DIR}" -S . -G Ninja \
   -DUSE_HTTP=ON \
   -DUSE_ETCD=ON \
   -DSTORE_USE_ETCD=ON \
-  -DUSE_TENT=OFF \
+  -DUSE_TENT=ON \
   -DWITH_TE=ON \
   -DWITH_STORE=ON \
   -DWITH_STORE_RUST=OFF \

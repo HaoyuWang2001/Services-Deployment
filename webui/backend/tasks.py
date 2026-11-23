@@ -155,7 +155,8 @@ class TaskManager:
                     sub.status = "failed"
                     sub.error = "后端进程重启，操作已中断；实例状态已恢复，可重新操作"
                     sub.finished_at = now
-        recovered = self.instances.recover_interrupted_transients()
+        recovered = (self.instances.recover_interrupted_transients()
+                     if self.instances is not None else 0)
         if changed:
             self._persist()
         if changed or recovered:
