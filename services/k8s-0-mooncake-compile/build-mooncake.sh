@@ -51,9 +51,20 @@ mkdir -p run
 exec 9>run/build.lock
 flock -n 9 || { echo "BUILD_SKIPPED: 已有编译在运行（flock 被占用；可能为他人任务或上次残留）"; exit 3; }
 
-if [[ "${CLEAN_BUILD}" == "true" && -d "${BUILD_DIR}" ]]; then
-    echo "[INFO] Clean build directory: ${BUILD_DIR}"
-    rm -rf "${BUILD_DIR}"
+# 明确打印本次是「清理后全量」还是「增量」，便于事后判断全量编译的成因
+if [[ "${CLEAN_BUILD}" == "true" ]]; then
+    if [[ -d "${BUILD_DIR}" ]]; then
+        echo "[INFO] CLEAN_BUILD=true → 清理 ${BUILD_DIR} 后全量编译"
+        rm -rf "${BUILD_DIR}"
+    else
+        echo "[INFO] CLEAN_BUILD=true，但 ${BUILD_DIR} 不存在 → 全量编译"
+    fi
+else
+    if [[ -d "${BUILD_DIR}" ]]; then
+        echo "[INFO] CLEAN_BUILD=false 且 build 目录存在 → 增量编译（不清理）"
+    else
+        echo "[INFO] CLEAN_BUILD=false 但 build 目录不存在 → 首次全量编译"
+    fi
 fi
 
 echo ">> Configure CMake (modern -B build style, Ninja+ccache 加速)"

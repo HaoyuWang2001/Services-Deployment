@@ -232,13 +232,37 @@ if [[ -z "${EFF_COMMIT}" ]]; then
 else
     git reset --hard -q "${EFF_COMMIT}"
 fi
-echo ">> 已切到 HEAD: $(git rev-parse HEAD)  ($(git log -1 --format=%s))"
+echo ">> 已切到 HEAD: $(git rev-parse HEAD)"
 '
 INFO "代码拉取完成"
 
-# 产物源目录在编译脚本执行后推导（见 STEP 6 之后），此处不再提前计算。
-ACTUAL_COMMIT="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" git -C "${REPO_DIR}" rev-parse --short HEAD)"
-INFO "已 checkout 的 commit: ${ACTUAL_COMMIT}（产物目录名由编译脚本自行决定，编译后解析）"
+# ---- 切换结果重点确认（与「拉取代码前确认」同款式）----
+# 采集切换后的实际 HEAD 信息；任一查询失败仅降级为 "-"，不中断主流程。
+POST_BRANCH="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" \
+    git -C "${REPO_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+ACTUAL_COMMIT="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" \
+    git -C "${REPO_DIR}" rev-parse --short HEAD 2>/dev/null || true)"
+ACTUAL_COMMIT_SUBJECT="$(docker exec "${GIT_SAFE_FLAGS[@]}" "${CONTAINER_NAME}" \
+    git -C "${REPO_DIR}" log -1 --format=%s 2>/dev/null || true)"
+[[ -n "${POST_BRANCH}" ]] || POST_BRANCH="-"
+[[ -n "${ACTUAL_COMMIT}" ]] || ACTUAL_COMMIT="-"
+[[ -n "${ACTUAL_COMMIT_SUBJECT}" ]] || ACTUAL_COMMIT_SUBJECT="-"
+
+# 指定 COMMIT_ID 时 git 处于 detached HEAD，分支名显示为请求的分支并标注 detached
+if [[ "${POST_BRANCH}" == "HEAD" ]]; then
+    BANNER_BRANCH="${EFF_BRANCH}（detached）"
+else
+    BANNER_BRANCH="${POST_BRANCH}"
+fi
+
+echo
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "!! 已切换到 HEAD（务必核对，产物正确性以此为准）"
+echo "!!   分支 BRANCH  : ${BANNER_BRANCH}"
+echo "!!   提交 COMMIT  : ${ACTUAL_COMMIT}"
+echo "!!   提交标题     : ${ACTUAL_COMMIT_SUBJECT}"
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo
 
 # ============================================================
 # STEP 4. 注入编译脚本（运行时打印 STEP 5）
