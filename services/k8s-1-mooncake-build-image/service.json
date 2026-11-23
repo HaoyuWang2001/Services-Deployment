@@ -1,12 +1,12 @@
 {
-  "name": "k8s-0-mooncake-build-image",
+  "name": "k8s-1-mooncake-build-image",
   "description": "从编译容器内产物根目录（ARTIFACT_DIR + COMMIT_ID 拼出 mooncake-<commit>-<arch>-linux）流式直传到 runtime 容器，打包镜像（含 whl 安装与校验）并导出 tar",
   "nodes": [],
   "workspace": "",
   "start": {
     "script": "build-mooncake-runtime-image.sh",
     "args": [],
-    "log": "build-mooncake-runtime-image.log"
+    "log": "k8s-1-mooncake-build-image.log"
   },
   "stop": {
     "timeout": 10

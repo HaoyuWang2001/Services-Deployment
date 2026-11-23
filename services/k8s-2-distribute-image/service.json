@@ -1,5 +1,5 @@
 {
-  "name": "k8s-1-distribute-image",
+  "name": "k8s-2-distribute-image",
   "description": "从编译机copy镜像到k8s-controller，导入主镜像、memory-pressure 镜像（读取节点本地 tar，可由变量跳过）和 pause 镜像",
   "nodes": [
     "k8s-controller-2nodes",
@@ -10,7 +10,7 @@
   "start": {
     "script": "distribute-image.sh",
     "args": [],
-    "log": "distribute-image.log"
+    "log": "k8s-2-distribute-image.log"
   },
   "stop": {
     "timeout": 10

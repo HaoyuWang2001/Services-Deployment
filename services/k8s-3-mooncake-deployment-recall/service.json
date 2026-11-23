@@ -1,5 +1,5 @@
 {
-  "name": "k8s-2-mooncake-deployment-recall",
+  "name": "k8s-3-mooncake-deployment-recall",
   "description": "部署mooncake k8s集群，包含etcd*1 master*1 store*2*N",
   "nodes": [
     "k8s-controller-2nodes",
@@ -10,7 +10,7 @@
   "start": {
     "script": "start.sh",
     "args": [],
-    "log": "k8s-2-mooncake-deployment-recall.log"
+    "log": "k8s-3-mooncake-deployment-recall.log"
   },
   "stop": {
     "script": "stop.sh",

@@ -361,7 +361,7 @@ INFO "编译脚本退出码: ${RC}"
 
 # 编译成功即完成：不再解析/拷贝产物到宿主机。
 # 产物保留在容器内（编译脚本自身的输出目录，如 ${REPO_DIR}/outputs/mooncake-<commit>-<arch>），
-# 需要时由下游服务（如 k8s-0-mooncake-build-image 通过 ARTIFACT_DIR）直接从容器取用。
+# 需要时由下游服务（如 k8s-1-mooncake-build-image 通过 ARTIFACT_DIR）直接从容器取用。
 
 # ============================================================
 # STEP 7. 容器保留（不删除，供下次复用）（运行时打印 STEP 8）

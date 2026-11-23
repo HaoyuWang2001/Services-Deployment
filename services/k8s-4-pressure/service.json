@@ -1,5 +1,5 @@
 {
-  "name": "k8s-3-pressure",
+  "name": "k8s-4-pressure",
   "description": "在 Mooncake Pod 中施加 CPU 压力，并在 Kubernetes 节点上部署 NUMA 内存带宽压力",
   "nodes": [
     "k8s-controller-16nodes"
@@ -9,7 +9,7 @@
   "start": {
     "script": "start.sh",
     "args": [],
-    "log": "k8s-3-pressure.log"
+    "log": "k8s-4-pressure.log"
   },
   "stop": {
     "script": "stop.sh",

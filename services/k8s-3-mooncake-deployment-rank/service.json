@@ -1,5 +1,5 @@
 {
-  "name": "k8s-2-mooncake-deployment-rank",
+  "name": "k8s-3-mooncake-deployment-rank",
   "description": "部署mooncake k8s集群，包含etcd*1 master*1 store*1*N",
   "nodes": [
     "k8s-controller-2nodes",
@@ -10,7 +10,7 @@
   "start": {
     "script": "start.sh",
     "args": [],
-    "log": "k8s-2-mooncake-deployment-rank.log"
+    "log": "k8s-3-mooncake-deployment-rank.log"
   },
   "stop": {
     "script": "stop.sh",
