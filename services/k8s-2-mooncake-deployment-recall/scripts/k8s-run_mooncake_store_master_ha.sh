@@ -102,22 +102,17 @@ echo "[INFO] etcd     : ${ETCD_ENDPOINT}"
 echo "[INFO] Starting Mooncake Master..."
 
 exec "${MOONCAKE_MASTER}" \
-  --default_kv_lease_ttl=300000 \
+  --default_kv_lease_ttl=1s \
   --default_kv_soft_pin_ttl=300000 \
   --metrics_port=17702 \
   --rpc_port=17701 \
   --ha_backend_type=etcd \
   --etcd_endpoints="${ETCD_ENDPOINT}" \
   --enable_ha=true \
-  --enable_oplog=false \
+  --enable_oplog=true \
   --rpc_address="${POD_IP}" \
   --enable_metrics_report_to_backend=true \
   --enable_offload=false \
-  --enable_snapshot=false \
-  --enable_snapshot_restore=false \
-  --snapshot_interval_seconds=10 \
-  --snapshot_retention_count=5 \
-  --snapshot_object_store_type="s3" \
   --v=0 \
   --cluster_id=mooncake_cluster_w00921547 \
   --submaster_count=1 \
@@ -129,4 +124,11 @@ exec "${MOONCAKE_MASTER}" \
   --vsegment_reserved_ratio=0 \
   --io_pattern_cold_eviction=false \
   --io_pattern_tier_down_bytes_per_cycle=0 \
-  --io_pattern_admission_frequency_threshold=1
+  --io_pattern_admission_frequency_threshold=1 \
+  --put_start_discard_timeout_sec=5 \
+  --put_start_release_timeout_sec=6
+#   --enable_snapshot=false \
+#   --enable_snapshot_restore=false \
+#   --snapshot_interval_seconds=10 \
+#   --snapshot_retention_count=5 \
+#   --snapshot_object_store_type="s3" \
