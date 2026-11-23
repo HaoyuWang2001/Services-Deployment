@@ -374,6 +374,29 @@ docker inspect -f '{{.State.Running}}' "${CONTAINER_NAME}" >/dev/null 2>&1 \
     && INFO "容器仍运行（未删除）: ${CONTAINER_NAME}" \
     || WARN "容器当前未运行: ${CONTAINER_NAME}"
 
+# 定位容器内真实产物目录（mooncake-<commit>-<arch>-linux），供汇总打印与下游取用
+ARTIFACT_PATH=""
+if [[ -n "${ACTUAL_COMMIT}" && "${ACTUAL_COMMIT}" != "-" ]]; then
+    ARTIFACT_ARCH="$(docker exec "${CONTAINER_NAME}" uname -m 2>/dev/null || true)"
+    CANDIDATE="${REPO_DIR}/outputs/mooncake-${ACTUAL_COMMIT}-${ARTIFACT_ARCH}-linux"
+    if docker exec "${CONTAINER_NAME}" test -d "${CANDIDATE}" 2>/dev/null; then
+        ARTIFACT_PATH="${CANDIDATE}"
+    else
+        # 兜底：按 commit 通配（唯一命中才采用）
+        ENTRIES="$(docker exec "${CONTAINER_NAME}" ls -1 "${REPO_DIR}/outputs" 2>/dev/null || true)"
+        MATCHES=()
+        while IFS= read -r entry; do
+            [[ -z "${entry}" ]] && continue
+            if [[ "${entry}" == "mooncake-${ACTUAL_COMMIT}-"*"-linux" ]]; then
+                MATCHES+=("${entry}")
+            fi
+        done <<< "${ENTRIES}"
+        if [[ "${#MATCHES[@]}" -eq 1 ]]; then
+            ARTIFACT_PATH="${REPO_DIR}/outputs/${MATCHES[0]}"
+        fi
+    fi
+fi
+
 # ============================================================
 # STEP 8. 汇总（运行时打印 STEP 9）
 # ============================================================
@@ -385,7 +408,11 @@ echo "  container   : ${CONTAINER_NAME} (复用，未删除)"
 echo "  branch      : ${EFF_BRANCH}"
 echo "  commit      : ${EFF_COMMIT:-<latest>} (actual ${ACTUAL_COMMIT})"
 echo "  build script: 容器内 ${CONTAINER_SCRIPT_DIR}/${BUILD_SCRIPT}"
-echo "  artifacts   : 保留在容器内 ${REPO_DIR}/outputs/（本服务不再拷贝到宿主机）"
+if [[ -n "${ARTIFACT_PATH}" ]]; then
+    echo "  artifacts   : 容器内 ${ARTIFACT_PATH}"
+else
+    echo "  artifacts   : 容器内 ${REPO_DIR}/outputs/（未定位到具体产物目录）"
+fi
 
 echo "============================================================"
 exit "${RC}"
