@@ -40,7 +40,11 @@ def test_start_command_structure():
     assert "mkdir -p logs/20261025-120000 run" in cmd
     # setsid 独立进程组 + 指纹写入 pid 文件
     assert "setsid nohup env SD_RUN_ID=20261025-120000 MASTER_PORT=2379 bash -c " in cmd
-    # 续写模式：分隔符行 + >> 追加重定向
+    # 启动前清空上一次会话日志，分隔符行 + >> 追加到已清空文件
+    assert "rm -f logs/20261025-120000/exit_code logs/20261025-120000/exit_codes.log " in cmd
+    assert "logs/20261025-120000/cleanup_code logs/20261025-120000/cleanup_codes.log" in cmd
+    assert ": > logs/20261025-120000/master.log;" in cmd
+    assert cmd.index(": > logs/20261025-120000/master.log;") < cmd.index("实例启动 =====")
     assert "实例启动 =====" in cmd
     assert '>> logs/20261025-120000/master.log;' in cmd
     assert ">> logs/20261025-120000/master.log 2>&1 < /dev/null &" in cmd
@@ -286,3 +290,15 @@ def test_shell_ws():
     assert shell_ws("/data/x") == "/data/x"  # 安全字符集，quote 后不变
     assert shell_ws("/data/my dir") == "'/data/my dir'"  # 防御性引用
     assert shell_ws("~/x") == "~/x"
+
+
+def test_start_command_clears_previous_session_log():
+    """任何状态下的启动：先清空本实例日志与退出码文件，只保留新日志。"""
+    svc = make_svc(stop={"script": "stop.sh", "timeout": 5})
+    cmd = build_start_command(svc, "r9", {"A": "1"})
+    reset_at = cmd.index(": > logs/r9/master.log;")
+    for p in ("exit_code", "exit_codes.log", "cleanup_code", "cleanup_codes.log"):
+        assert f"logs/r9/{p}" in cmd
+        assert cmd.index(f"logs/r9/{p}") < reset_at
+    assert cmd.index(": > logs/r9/master.log;") < cmd.index("setsid nohup")
+    assert ">> logs/r9/master.log;" in cmd  # 清空后仍以追加方式写入本次内容

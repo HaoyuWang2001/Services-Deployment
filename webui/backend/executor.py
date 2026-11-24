@@ -44,11 +44,13 @@ _TICK_CMD = "sed 's/.*) //' /proc/$pid/stat 2>/dev/null | awk '{print $20}'"
 
 def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str, str],
                         args: Optional[list[str]] = None) -> str:
-    """启动命令：续写模式——同一实例多次启动共用日志文件，追加前写入分隔符行。
+    """启动命令：每次启动先清空该实例日志，只保留本次启动后的内容。
 
     - args 缺省（None）时使用 service.start.args；实例快照由调用方显式传入
-    - 重定向使用 >>（续写），启动前写 "===== [时间] 实例启动 =====" 分隔符，
-      并紧随一行实际启动命令提示（含参数与变量个数，不含变量值）
+    - 启动前清空 logs/<run_id>/ 下上一次会话的日志与退出码文件（exit_code /
+      exit_codes.log / cleanup_code / cleanup_codes.log），保证重启后只展示新日志
+    - 随后写 "===== [时间] 实例启动 =====" 分隔符 + 实际启动命令提示
+      （含参数与变量个数，不含变量值），运行时输出以 >> 追加到已清空的文件
     - 退出码双写：exit_code（最近一次）+ exit_codes.log（历史，时间+码）
     - 配置了 stop.script 时：start.sh 自然退出（未被杀死）后自动执行 stop.sh
       完成清理（输出与其退出码写入日志，不影响实例自身退出码）
@@ -92,9 +94,15 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     if variables:
         hint_text += f"（变量 {len(variables)} 个）"
     hint = f"printf '%s\\n' {shlex.quote(hint_text)} >> {shlex.quote(logfile)}; "
+    # 每次启动清空该实例上一次会话的日志与退出码文件（只展示本次启动后的日志）
+    reset = (
+        f"rm -f {shlex.quote(f'{logdir}/exit_code')} {shlex.quote(f'{logdir}/exit_codes.log')} "
+        f"{shlex.quote(f'{logdir}/cleanup_code')} {shlex.quote(f'{logdir}/cleanup_codes.log')}; "
+        f": > {shlex.quote(logfile)}; "
+    )
     return (
         f"cd {ws} && mkdir -p {shlex.quote(logdir)} run && "
-        f"{separator}{hint}"
+        f"{reset}{separator}{hint}"
         # setsid：服务进程树独立进程组（$! 即组长），停止时可整组清除。
         f"{{ setsid nohup {env}bash -c {shlex.quote(inner)} "
         f">> {shlex.quote(logfile)} 2>&1 < /dev/null & pid=$!; "
