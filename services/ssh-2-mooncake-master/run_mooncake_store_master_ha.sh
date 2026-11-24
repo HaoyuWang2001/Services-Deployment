@@ -98,6 +98,8 @@ export MC_VSEGMENT_OPLOG_MODE=aligned
 # ============================================================================
 
 # 绑numa0 8核27-34
+# 注意：下方 --enable_oplog 必须保持开启（true），不可改为 false；
+# 该选项与 vsegment 特性耦合，关闭 oplog 将导致 vsegment 无法启用。
 exec numactl --physcpubind=27-34 --preferred=0 ${MOONCAKE_MASTER} \
   --default_kv_lease_ttl=300000 \
   --default_kv_soft_pin_ttl=300000 \
@@ -106,7 +108,7 @@ exec numactl --physcpubind=27-34 --preferred=0 ${MOONCAKE_MASTER} \
   --ha_backend_type=etcd \
   --etcd_endpoints="141.61.84.151:17779" \
   --enable_ha=true \
-  --enable_oplog=false \
+  --enable_oplog=true \
   --rpc_address=$(ip a | grep -Eo '192\.168\.84\.[0-9]+' | head -n1) \
   --enable_metrics_report_to_backend=true \
   --enable_offload=false \
