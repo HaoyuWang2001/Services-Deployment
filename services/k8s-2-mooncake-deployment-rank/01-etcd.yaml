@@ -39,6 +39,8 @@ spec:
         app: mooncake-etcd
         role: etcd
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: "worker06"
       hostNetwork: false
       terminationGracePeriodSeconds: 5
       containers:

@@ -42,6 +42,8 @@ spec:
         app: mooncake-master
         role: master
     spec:
+      nodeSelector:
+        kubernetes.io/hostname: "worker08"
       hostNetwork: false
       terminationGracePeriodSeconds: 5
       containers:

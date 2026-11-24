@@ -23,7 +23,7 @@ spec:
         ${STORE_SLOT_LABEL_KEY}: "${STORE_SLOT}"
     spec:
       nodeSelector:
-        "node-role.kubernetes.io/worker": "worker02"
+        kubernetes.io/hostname: "worker02"
       containers:
         - name: mooncake-store
           image: ${MOONCAKE_IMAGE}
