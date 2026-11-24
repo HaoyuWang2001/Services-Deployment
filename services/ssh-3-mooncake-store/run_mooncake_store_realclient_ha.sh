@@ -98,6 +98,9 @@ export MC_YLT_URMA_PRIORITY=7                # 默认 15（URMA 最高优先级�
 export MC_YLT_URMA_EVENT_MODE=false          # 默认 true；false=走轮询，时延更低、CPU 更高
 export MC_YLT_URMA_BUSY_POLL_BUDGET=16       # 默认 16，event_mode=false 时的忙轮询预算
 export MC_YLT_URMA_POLL_INTERVAL=5           # 默认 5（微秒），轮询间隔
+
+export MC_USE_TENT=1
+export MC_TENT_CONF="{\"transports\":{\"ub\":{\"enable\":true,\"device_filter\":\"${URMA_DEVICE}\",\"slice_size\":1048576,\"worker_count\":2}}}"
 # 3) ylt 日志（easylog，进程内只初始化一次）
 export MC_YLT_LOG_LEVEL=info                 # 默认 warn；trace|debug|info|warn|error|critical
 export MC_YLT_LOG_MAX_FILE_SIZE=5242880   # 默认 1000 MiB（字节）
