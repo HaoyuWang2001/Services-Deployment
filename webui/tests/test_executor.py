@@ -42,7 +42,8 @@ def test_start_command_structure():
     assert "setsid nohup env SD_RUN_ID=20261025-120000 MASTER_PORT=2379 bash -c " in cmd
     # 启动前清空上一次会话日志，分隔符行 + >> 追加到已清空文件
     assert "rm -f logs/20261025-120000/exit_code logs/20261025-120000/exit_codes.log " in cmd
-    assert "logs/20261025-120000/cleanup_code logs/20261025-120000/cleanup_codes.log" in cmd
+    assert "logs/20261025-120000/cleanup_code logs/20261025-120000/cleanup_codes.log " in cmd
+    assert "run/deploy.status;" in cmd
     assert ": > logs/20261025-120000/master.log;" in cmd
     assert cmd.index(": > logs/20261025-120000/master.log;") < cmd.index("实例启动 =====")
     assert "实例启动 =====" in cmd

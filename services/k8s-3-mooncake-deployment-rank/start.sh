@@ -105,6 +105,8 @@ write_deploy_status() {
     fi
 }
 
+write_deploy_status "STARTING"
+
 store_ds_name() {
     printf 'mooncake-store-%s' "$1"
 }
@@ -603,8 +605,6 @@ print_workload_summary() {
 
 INFO "开始持续监测 Mooncake 工作负载..."
 INFO "启动就绪门槛: ${STARTUP_TIMEOUT}s，运行期异常容忍窗: ${MONITOR_TOLERANCE}s"
-
-write_deploy_status "STARTING"
 
 MONITOR_STATE="STARTING"   # STARTING | READY | DEGRADED
 UNHEALTHY_SINCE=0

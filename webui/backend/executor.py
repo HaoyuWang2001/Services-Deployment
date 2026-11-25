@@ -94,10 +94,11 @@ def build_start_command(service: ServiceConfig, run_id: str, variables: dict[str
     if variables:
         hint_text += f"（变量 {len(variables)} 个）"
     hint = f"printf '%s\\n' {shlex.quote(hint_text)} >> {shlex.quote(logfile)}; "
-    # 每次启动清空该实例上一次会话的日志与退出码文件（只展示本次启动后的日志）
+    # 每次启动清空该实例上一次会话的日志、退出码与部署心跳文件
     reset = (
         f"rm -f {shlex.quote(f'{logdir}/exit_code')} {shlex.quote(f'{logdir}/exit_codes.log')} "
-        f"{shlex.quote(f'{logdir}/cleanup_code')} {shlex.quote(f'{logdir}/cleanup_codes.log')}; "
+        f"{shlex.quote(f'{logdir}/cleanup_code')} {shlex.quote(f'{logdir}/cleanup_codes.log')} "
+        f"run/deploy.status; "
         f": > {shlex.quote(logfile)}; "
     )
     return (
