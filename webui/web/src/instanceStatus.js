@@ -89,3 +89,10 @@ const ELIGIBLE_SETS = {
 export function isEligible(action, status) {
   return (ELIGIBLE_SETS[action] || []).includes(status)
 }
+
+// 服务每次启动/重启写入日志首行的会话分隔符（后台 build_start_command 生成）
+const SESSION_START_RE = /^===== \[[^\]]+\] 实例启动 =====$/
+
+export function isSessionStartLine(text) {
+  return SESSION_START_RE.test(String(text || '').trim())
+}

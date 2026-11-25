@@ -85,6 +85,7 @@ import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref,
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { api, fetchLogText } from '../api'
+import { isSessionStartLine } from '../instanceStatus'
 import { nodeColor } from '../ui/nodeColors'
 
 const route = useRoute()
@@ -372,7 +373,15 @@ function connect(tab) {
   tab.ws.onmessage = (ev) => {
     try {
       const m = JSON.parse(ev.data)
-      if (m.type === 'line') push(tab, 'line', m.node, m.data)
+      if (m.type === 'line') {
+        if (isSessionStartLine(m.data)) {
+          // 服务重新启动：只显示新日志（节点文件已被后台截断，这里清空浏览器缓冲）
+          const hadLines = tab.lines.length > 0
+          tab.lines = []
+          if (hadLines) push(tab, 'notice', m.node, '检测到新的启动会话，已自动清空旧日志')
+        }
+        push(tab, 'line', m.node, m.data)
+      }
       else if (m.type === 'meta') push(tab, 'notice', m.node, `已连接 ${m.node} 的日志流（run_id=${m.run_id}，文件 ${m.file}）`)
       else if (m.type === 'error') {
         push(tab, 'error', m.node, `${m.node}：${m.message}`)
