@@ -15,10 +15,11 @@
 #      runtime 容器 /home/Mooncake/outputs，原位置放回
 #   5. 在 runtime 容器内对照产物内容重建全部软链（绝对路径）并逐链接校验
 #   6. pip3 安装 wheel（运行时注入代理，不固化进基础镜像）
-#   7-8. /home/check-mooncake-ldd.sh、/home/check-mooncake-wheel.sh 校验
-#   9. docker commit → <IMAGE_NAME>:<YYYYmmddHHMM>.<COMMIT_ID>
-#  10. docker save 导出 tar 并校验（tar 根含 manifest.json），打印绝对路径
-#  11. 清理 runtime 容器并汇总（镜像与 tar 保留）
+#   7. 把服务目录内的两个校验脚本注入 runtime 容器固定路径 /home/（覆盖基础镜像内版本）
+#   8-9. /home/check-mooncake-ldd.sh、/home/check-mooncake-wheel.sh 校验
+#  10. docker commit → <IMAGE_NAME>:<YYYYmmddHHMM>.<COMMIT_ID>
+#  11. docker save 导出 tar 并校验（tar 根含 manifest.json），打印绝对路径
+#  12. 清理 runtime 容器并汇总（镜像与 tar 保留）
 #
 # 失败语义（部署工具集成，run-to-completion 任务）：
 #   - 任一步失败 → 非零退出 → 实例显示异常(码)；stop 无脚本，无副作用
@@ -309,6 +310,16 @@ fi
 # ============================================================
 # STEP 7-8. 校验脚本
 # ============================================================
+STEP "注入校验脚本到 runtime 容器固定路径 /home/"
+
+[[ -f "${SCRIPT_DIR}/check-mooncake-ldd.sh" ]] \
+    || { ERROR "校验脚本缺失: ${SCRIPT_DIR}/check-mooncake-ldd.sh"; exit 1; }
+[[ -f "${SCRIPT_DIR}/check-mooncake-wheel.sh" ]] \
+    || { ERROR "校验脚本缺失: ${SCRIPT_DIR}/check-mooncake-wheel.sh"; exit 1; }
+docker cp "${SCRIPT_DIR}/check-mooncake-ldd.sh" "${RUNTIME_CONTAINER}:${CHECK_LDD}"
+docker cp "${SCRIPT_DIR}/check-mooncake-wheel.sh" "${RUNTIME_CONTAINER}:${CHECK_WHEEL}"
+INFO "校验脚本已注入: ${CHECK_LDD} / ${CHECK_WHEEL}"
+
 STEP "执行 ${CHECK_LDD}"
 
 docker exec "${RUNTIME_CONTAINER}" test -f "${CHECK_LDD}" \
@@ -319,13 +330,6 @@ STEP "执行 ${CHECK_WHEEL}"
 
 docker exec "${RUNTIME_CONTAINER}" test -f "${CHECK_WHEEL}" \
     || { ERROR "校验脚本不存在: ${CHECK_WHEEL}"; exit 1; }
-# 基础镜像的检查脚本仍固定旧 wheel 版本；本次产物预期为 0.3.14。
-# 只替换已知的旧值，并确认替换成功，避免意外跳过版本校验。
-docker exec "${RUNTIME_CONTAINER}" sed -i \
-    's/^EXPECTED_VERSION="0\.3\.12\.post1"$/EXPECTED_VERSION="0.3.14"/' \
-    "${CHECK_WHEEL}"
-docker exec "${RUNTIME_CONTAINER}" grep -qx 'EXPECTED_VERSION="0.3.14"' "${CHECK_WHEEL}" \
-    || { ERROR "wheel 校验脚本版本配置不符合预期: ${CHECK_WHEEL}"; exit 1; }
 docker exec "${RUNTIME_CONTAINER}" bash "${CHECK_WHEEL}"
 
 # ============================================================

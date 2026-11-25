@@ -13,7 +13,9 @@
   },
   "deploy": {
     "files": [
-      "build-mooncake-runtime-image.sh"
+      "build-mooncake-runtime-image.sh",
+      "check-mooncake-ldd.sh",
+      "check-mooncake-wheel.sh"
     ]
   },
   "variables": {
