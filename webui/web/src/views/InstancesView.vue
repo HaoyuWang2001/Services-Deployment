@@ -1,10 +1,12 @@
 <template>
   <div class="sd-page">
     <PageHeader title="运行实例" description="全部服务的实例总表；可多选批量操作，或用行内菜单单独操作">
-      <template #actions>
+      <template #badge>
         <el-tooltip content="刷新" placement="top">
           <el-button size="small" circle :icon="Refresh" :loading="loading" aria-label="刷新实例列表" @click="load()" />
         </el-tooltip>
+      </template>
+      <template #actions>
         <el-switch v-model="autoRefresh" active-text="10 秒自动刷新" />
       </template>
     </PageHeader>
