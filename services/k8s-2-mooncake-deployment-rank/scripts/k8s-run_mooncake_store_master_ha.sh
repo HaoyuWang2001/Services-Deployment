@@ -102,7 +102,7 @@ echo "[INFO] etcd     : ${ETCD_ENDPOINT}"
 echo "[INFO] Starting Mooncake Master..."
 
 exec "${MOONCAKE_MASTER}" \
-  --default_kv_lease_ttl=300000 \
+  --default_kv_lease_ttl=1000 \
   --default_kv_soft_pin_ttl=300000 \
   --metrics_port=17702 \
   --rpc_port=17701 \
@@ -126,8 +126,8 @@ exec "${MOONCAKE_MASTER}" \
   --io_pattern_cold_eviction=false \
   --io_pattern_tier_down_bytes_per_cycle=0 \
   --io_pattern_admission_frequency_threshold=1 \
-  --put_start_discard_timeout_sec=5 \
-  --put_start_release_timeout_sec=6
+  --put_start_discard_timeout_sec=0 \
+  --put_start_release_timeout_sec=0
 #   --enable_snapshot=false \
 #   --enable_snapshot_restore=false \
 #   --snapshot_interval_seconds=10 \
